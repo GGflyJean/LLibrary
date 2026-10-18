@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}{{ work.title }} - LLibrary{% endblock %}
+{% block content %}
+<article class="detail">
+  <img class="cover" src="{{ cover_url }}" alt="">
+  <div class="info">
+    <p class="back"><a href="/">← 返回书库</a></p>
+    <h1>{{ work.title }}</h1>
+    <p class="authors">{{ work.authors_label() }}</p>
+    <dl>
+      <dt>出版社</dt><dd>{{ work.publisher }}</dd>
+      <dt>ISBN</dt><dd>{{ work.isbn }}</dd>
+      <dt>语言</dt><dd>{{ work.language }}</dd>
+      <dt>出版日期</dt><dd>{{ work.pub_date }}</dd>
+    </dl>
+    {% if !work.description.is_empty() %}
+    <p class="description">{{ work.description }}</p>
+    {% endif %}
+    <h2>文件</h2>
+    <table class="files">
+      <thead><tr><th>格式</th><th>大小</th><th>路径</th><th>状态</th><th></th></tr></thead>
+      <tbody>
+      {% for file in files %}
+        <tr>
+          <td>{{ file.format }}</td>
+          <td>{{ file.size_label() }}</td>
+          <td class="path">{{ file.rel_path }}</td>
+          <td>
+            {% if file.missing %}缺失{% else %}可用{% endif %}
+            {% if file.is_duplicate %} · 重复{% endif %}
+            {% if file.error.is_some() %} · 解析错误{% endif %}
+          </td>
+          <td>{% if !file.missing %}<a href="/files/{{ file.id }}">打开 / 下载</a>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</article>
+{% endblock %}

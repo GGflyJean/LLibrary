@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="600" viewBox="0 0 400 600">
+  <rect width="400" height="600" fill="#e8eef6"/>
+  <rect x="70" y="120" width="260" height="360" rx="12" fill="#3d5a80" opacity="0.15"/>
+  <path d="M110 160h100v280h-100z" fill="#3d5a80" opacity="0.55"/>
+  <path d="M210 160h80v280h-80z" fill="#3d5a80" opacity="0.35"/>
+  <text x="200" y="540" text-anchor="middle" font-family="sans-serif" font-size="28" fill="#6d675f">LLibrary</text>
+</svg>

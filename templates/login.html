@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}登录 - LLibrary{% endblock %}
+{% block content %}
+<form class="login" method="post" action="/login">
+  <h1>登录 LLibrary</h1>
+  <input type="hidden" name="next" value="{{ next }}">
+  <label>用户名 <input name="username" autocomplete="username" required></label>
+  <label>密码 <input name="password" type="password" autocomplete="current-password" required></label>
+  {% if !error.is_empty() %}<p class="error">{{ error }}</p>{% endif %}
+  <button type="submit">登录</button>
+</form>
+{% endblock %}

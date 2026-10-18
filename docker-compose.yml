@@ -1,0 +1,23 @@
+services:
+  llibrary:
+    image: ghcr.io/ggflyjean/llibrary:latest
+    container_name: llibrary
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      DATA_DIR: /data
+      DB_PATH: /data/library.db
+      BIND_ADDR: 0.0.0.0:8080
+      AUTH_USER: ${AUTH_USER:?请设置 AUTH_USER}
+      AUTH_PASSWORD_HASH: ${AUTH_PASSWORD_HASH:?请设置 AUTH_PASSWORD_HASH}
+      LLIBRARY_SECRET: ${LLIBRARY_SECRET:-}
+      SCAN_CRON: ${SCAN_CRON:-}
+    volumes:
+      - /public:/sources/public:ro
+      - /public/LLibrary-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

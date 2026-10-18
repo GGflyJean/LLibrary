@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}书库 - LLibrary{% endblock %}
+{% block search %}
+<form class="search" action="/" method="get"
+      hx-get="/" hx-target="#results" hx-select="#results" hx-push-url="true"
+      hx-trigger="submit, keyup changed delay:400ms from:input[name=q]">
+  <input type="search" name="q" placeholder="搜索书名、作者、出版社、ISBN" value="{{ query }}">
+  <button type="submit">搜索</button>
+</form>
+{% endblock %}
+{% block content %}
+{% if scanning %}
+<div class="banner">正在扫描 {{ scan_source }}：{{ scan_phase }} {{ scan_processed }}/{{ scan_total }}</div>
+{% endif %}
+<div class="filters">
+  <form method="get" action="/" class="filter-form">
+    <input type="hidden" name="q" value="{{ query }}">
+    <select name="publisher" onchange="this.form.submit()">
+      <option value="">全部出版社</option>
+      {% for item in publishers %}
+      <option value="{{ item }}" {% if item.as_str() == publisher.as_str() %}selected{% endif %}>{{ item }}</option>
+      {% endfor %}
+    </select>
+    <select name="format" onchange="this.form.submit()">
+      <option value="">全部格式</option>
+      {% for item in formats %}
+      <option value="{{ item }}" {% if item.as_str() == format.as_str() %}selected{% endif %}>{{ item }}</option>
+      {% endfor %}
+    </select>
+    <select name="source" onchange="this.form.submit()">
+      <option value="">全部来源</option>
+      {% for item in source_options %}
+      <option value="{{ item.id }}" {% if item.selected %}selected{% endif %}>{{ item.name }}</option>
+      {% endfor %}
+    </select>
+  </form>
+  <span class="muted">共 {{ total }} 个作品</span>
+</div>
+<div id="results">
+{% if works.is_empty() %}
+  <p class="empty">没有找到作品。</p>
+{% else %}
+  <div class="grid">
+  {% for work in works %}
+    <a class="card" href="/works/{{ work.id }}">
+      <img src="{{ work.cover_url() }}" alt="" loading="lazy">
+      <div class="card-body">
+        <h3>{{ work.title }}</h3>
+        <p class="authors">{{ work.authors_label() }}</p>
+        <p class="meta">{{ work.publisher }}</p>
+        <p class="badges">{{ work.formats_label() }}{% if work.all_missing %} · 缺失{% endif %}{% if work.has_duplicate %} · 重复{% endif %}</p>
+      </div>
+    </a>
+  {% endfor %}
+  </div>
+  <div class="pager">
+    {% if prev_page > 0 %}<a href="?q={{ query }}&publisher={{ publisher }}&format={{ format }}&source={{ source_id }}&page={{ prev_page }}">上一页</a>{% endif %}
+    <span>第 {{ page }} / {{ total_pages }} 页</span>
+    {% if next_page > 0 %}<a href="?q={{ query }}&publisher={{ publisher }}&format={{ format }}&source={{ source_id }}&page={{ next_page }}">下一页</a>{% endif %}
+  </div>
+{% endif %}
+</div>
+{% endblock %}

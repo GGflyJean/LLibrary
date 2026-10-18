@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}扫描 - LLibrary{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>扫描</h1>
+  <form method="post" action="/scan"><button type="submit">立即扫描全部来源</button></form>
+</div>
+{% if scanning %}
+<div class="banner">正在扫描 {{ progress_source() }}：{{ progress_phase() }} {{ progress_processed() }}/{{ progress_total() }}</div>
+{% endif %}
+<h2>最近扫描</h2>
+<table class="files">
+  <thead><tr><th>来源</th><th>状态</th><th>开始</th><th>结束</th><th>新增</th><th>变化</th><th>缺失</th><th>错误</th></tr></thead>
+  <tbody>
+  {% for run in runs %}
+    <tr>
+      <td>{{ run.source_id }}</td>
+      <td>{{ run.status }}</td>
+      <td>{{ run.started_at }}</td>
+      <td>{{ run.finished_label() }}</td>
+      <td>{{ run.stats.new }}</td>
+      <td>{{ run.stats.changed }}</td>
+      <td>{{ run.stats.missing }}</td>
+      <td>{{ run.stats.errors }}</td>
+    </tr>
+    {% if !run.error_label().is_empty() %}
+    <tr><td colspan="8" class="error">{{ run.error_label() }}</td></tr>
+    {% endif %}
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

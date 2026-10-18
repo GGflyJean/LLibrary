@@ -1,0 +1,132 @@
+# 极空间部署运行手册
+
+## 1. 准备数据目录
+
+在极空间上创建：
+
+```text
+/public/LLibrary-data
+```
+
+容器以 uid `10001` 运行，需要该目录可写。若极空间终端可用：
+
+```bash
+mkdir -p /public/LLibrary-data
+chown -R 10001:10001 /public/LLibrary-data
+```
+
+如果无法修改属主，可在 Compose 中临时把 `user` 设为 `"0:0"`，完成初始化后再改回。
+
+## 2. 准备环境变量
+
+在 `LLibrary` 目录生成密码哈希：
+
+```bash
+cargo run -- hash-password '你的密码'
+```
+
+创建 `.env`：
+
+```text
+AUTH_USER=reader
+AUTH_PASSWORD_HASH=<上一步输出>
+LLIBRARY_SECRET=<随机长字符串，可选>
+SCAN_CRON=
+```
+
+`LLIBRARY_SECRET` 只在添加 WebDAV 来源时需要；生成后不要丢失，否则已保存的 WebDAV 凭据无法解密。
+
+## 3. 部署
+
+**不需要把源码放到极空间。** 镜像里已经包含编译好的二进制、模板和静态文件；NAS 上只需要：
+
+1. `docker-compose.yml`
+2. `.env`
+3. 一个可用的镜像
+
+镜像来源有三种：
+
+方式 A：GHCR 镜像（推荐）
+
+前置条件：GitHub Actions 已经成功构建并推送镜像。GHCR 包默认是私有的，极空间拉取前需要登录，或者把 package 设为 public：
+
+```bash
+docker login ghcr.io -u <GitHub 用户名> --password <PAT>
+docker compose pull
+docker compose up -d
+```
+
+方式 B：在本机构建后导入（极空间无法拉取 GHCR 时）
+
+```bash
+docker build -t llibrary:local .
+docker save llibrary:local -o llibrary-local.tar
+```
+
+把 `llibrary-local.tar` 上传到极空间，在 Docker 界面导入镜像，然后把 `docker-compose.yml` 的 `image` 改为 `llibrary:local` 后启动。这一步只需要 Mac 上有 Docker/OrbStack，不需要把源码传到 NAS。
+
+方式 C：把源码拉到极空间构建（不推荐）
+
+需要极空间能运行 Docker build 或 SSH 构建；Rust release 编译较吃 CPU/内存，且极空间 Docker 界面未必支持 build。除非前两种方式都不可用，否则不建议。
+
+## 4. 首次配置
+
+1. 打开 `http://<nas>:8080`，用 `AUTH_USER` / 密码登录。
+2. 在极空间终端（SSH，或 Docker 界面里的容器终端）执行：
+   ```bash
+   docker exec -it llibrary llibrary sources add \
+     --name 主书库 --kind local --location /sources/public/书
+   ```
+   这一步添加来源并立即触发首次扫描；容器内已包含 CLI，不需要源码。
+3. 扫描页 `/scans` 查看进度与报告；`/api/scans/current` 返回 JSON 进度。
+
+## 5. 结果核对
+
+首轮扫描预期规模（基于 2026-10 的书库）：
+
+```text
+文件：约 9010
+体积：约 104 GB
+作品：约 5089
+格式：epub 3765 / azw3 3765 / pdf 1455 / mobi 24 / azw 1
+```
+
+在 `/` 搜索、打开详情、用 OPDS 客户端访问 `http://<nas>:8080/opds` 验证。
+
+## 6. 备份
+
+需要备份的只有 `DATA_DIR`（默认 `/public/LLibrary-data`）：
+
+```bash
+tar -czf /public/LLibrary-data-$(date +%F).tar.gz -C /public LLibrary-data
+```
+
+书籍文件不需要备份到该目录；服务从不修改它们。
+
+## 7. 回滚
+
+```bash
+docker compose down
+rm -rf /public/LLibrary-data
+```
+
+书库文件不受影响。重新部署后重新添加来源即可重建索引。
+
+## 8. 升级
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+数据库迁移在启动时自动执行。升级前建议备份 `DATA_DIR`。
+
+## 9. 定时扫描
+
+默认关闭。观察到首次全量扫描耗时后，可在 `.env` 设置：
+
+```text
+SCAN_CRON=0 3 * * *
+```
+
+然后 `docker compose up -d`。扫描任务串行执行，不会并发读写 NAS。
