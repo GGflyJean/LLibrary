@@ -3,16 +3,9 @@ FROM rust:1.99-slim AS builder
 WORKDIR /app
 
 COPY Cargo.toml Cargo.lock ./
-RUN mkdir -p src \
-    && printf 'fn main() {}\n' > src/main.rs \
-    && printf '' > src/lib.rs \
-    && cargo build --release \
-    && rm -rf src
-
 COPY src ./src
 COPY templates ./templates
 COPY static ./static
-RUN cargo clean -p llibrary || true
 RUN cargo build --release --locked
 
 FROM debian:bookworm-slim
