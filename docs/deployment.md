@@ -48,18 +48,19 @@ SCAN_CRON=
 
 方式 A：GHCR 直接拉取（推荐）
 
-前置条件：GitHub Actions 已经成功构建并推送镜像。GHCR 包默认是私有的，极空间拉取前需要登录，或者把 package 设为 public：
+当前 GitHub Actions 已构建成功，`ghcr.io/ggflyjean/llibrary:latest` 可以匿名拉取，不需要 `docker login`：
 
 ```bash
-docker login ghcr.io -u <GitHub 用户名> --password <PAT>
 docker compose pull
 docker compose up -d
 ```
 
+如果以后把 package 改成私有，再执行 `docker login ghcr.io -u <GitHub 用户名> --password <PAT>`，或改用方式 B。
+
 方式 B：从 GitHub Actions 下载镜像 tar（无本地 Docker；GHCR 不可达时）
 
 1. 打开仓库的 Actions → `docker` → 最近一次成功运行
-2. 页面底部 Artifacts → 下载 `llibrary-image`
+2. 页面底部 Artifacts → 下载 `llibrary-image`（约 42 MB）
 3. 解压得到 `llibrary-image.tar.gz`，再执行 `gunzip llibrary-image.tar.gz`
 4. 在极空间 Docker 界面导入 `llibrary-image.tar`（镜像名是 `llibrary:local`）
 5. 把 `docker-compose.yml` 的 `image` 改为 `llibrary:local` 后启动
