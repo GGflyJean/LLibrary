@@ -12,7 +12,8 @@ RUN mkdir -p src \
 COPY src ./src
 COPY templates ./templates
 COPY static ./static
-RUN cargo build --release
+RUN cargo clean -p llibrary || true
+RUN cargo build --release --locked
 
 FROM debian:bookworm-slim
 

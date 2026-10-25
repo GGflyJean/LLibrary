@@ -31,6 +31,8 @@ jobs:
         run: |
           docker pull ghcr.io/ggflyjean/llibrary:${{ github.sha }}
           docker tag ghcr.io/ggflyjean/llibrary:${{ github.sha }} llibrary:local
+      - name: Smoke test image binary
+        run: docker run --rm ghcr.io/ggflyjean/llibrary:${{ github.sha }} --help | grep -q "serve"
       - name: Export image tarball
         run: docker save llibrary:local | gzip > llibrary-image.tar.gz
       - uses: actions/upload-artifact@v4
