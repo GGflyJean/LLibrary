@@ -36,6 +36,12 @@ SCAN_CRON=
 
 `LLIBRARY_SECRET` 只在添加 WebDAV 来源时需要；生成后不要丢失，否则已保存的 WebDAV 凭据无法解密。
 
+> Argon2 哈希包含 `$`。直接粘贴到 Compose YAML 时，要把每个 `$` 写成 `$$`，否则 Compose 会把它当变量插值。可以这样生成转义后的值：
+>
+> ```bash
+> cargo run -- hash-password '你的密码' | sed 's/\$/$$/g'
+> ```
+
 ## 3. 部署
 
 **不需要把源码放到极空间。** 镜像里已经包含编译好的二进制、模板和静态文件；NAS 上只需要：

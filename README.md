@@ -36,6 +36,12 @@
 cargo run -- hash-password 'change-me'
 ```
 
+哈希里包含 `$`。直接写进 Compose YAML 时，必须把每个 `$` 写成 `$$`，否则会被 Compose 当成变量插值；也可以直接生成转义后的值：
+
+```bash
+cargo run -- hash-password 'change-me' | sed 's/\$/$$/g'
+```
+
 ## 本地运行
 
 ```bash
