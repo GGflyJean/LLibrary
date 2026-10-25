@@ -27,3 +27,14 @@ jobs:
           tags: |
             ghcr.io/ggflyjean/llibrary:latest
             ghcr.io/ggflyjean/llibrary:${{ github.sha }}
+      - name: Tag image for offline import
+        run: |
+          docker pull ghcr.io/ggflyjean/llibrary:${{ github.sha }}
+          docker tag ghcr.io/ggflyjean/llibrary:${{ github.sha }} llibrary:local
+      - name: Export image tarball
+        run: docker save llibrary:local | gzip > llibrary-image.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: llibrary-image
+          path: llibrary-image.tar.gz
+          retention-days: 14

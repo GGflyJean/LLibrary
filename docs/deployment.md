@@ -44,9 +44,9 @@ SCAN_CRON=
 2. `.env`
 3. 一个可用的镜像
 
-镜像来源有三种：
+镜像来源有四种，**前两种都不需要本地 Docker**：
 
-方式 A：GHCR 镜像（推荐）
+方式 A：GHCR 直接拉取（推荐）
 
 前置条件：GitHub Actions 已经成功构建并推送镜像。GHCR 包默认是私有的，极空间拉取前需要登录，或者把 package 设为 public：
 
@@ -56,18 +56,28 @@ docker compose pull
 docker compose up -d
 ```
 
-方式 B：在本机构建后导入（极空间无法拉取 GHCR 时）
+方式 B：从 GitHub Actions 下载镜像 tar（无本地 Docker；GHCR 不可达时）
+
+1. 打开仓库的 Actions → `docker` → 最近一次成功运行
+2. 页面底部 Artifacts → 下载 `llibrary-image`
+3. 解压得到 `llibrary-image.tar.gz`，再执行 `gunzip llibrary-image.tar.gz`
+4. 在极空间 Docker 界面导入 `llibrary-image.tar`（镜像名是 `llibrary:local`）
+5. 把 `docker-compose.yml` 的 `image` 改为 `llibrary:local` 后启动
+
+这条路径不需要你在 Mac 上安装 Docker，也不需要极空间能访问 GHCR。
+
+方式 C：在本机构建（需要 Docker/OrbStack）
 
 ```bash
 docker build -t llibrary:local .
 docker save llibrary:local -o llibrary-local.tar
 ```
 
-把 `llibrary-local.tar` 上传到极空间，在 Docker 界面导入镜像，然后把 `docker-compose.yml` 的 `image` 改为 `llibrary:local` 后启动。这一步只需要 Mac 上有 Docker/OrbStack，不需要把源码传到 NAS。
+把 `llibrary-local.tar` 上传到极空间，在 Docker 界面导入镜像，然后把 `docker-compose.yml` 的 `image` 改为 `llibrary:local` 后启动。
 
-方式 C：把源码拉到极空间构建（不推荐）
+方式 D：把源码拉到极空间构建（不推荐）
 
-需要极空间能运行 Docker build 或 SSH 构建；Rust release 编译较吃 CPU/内存，且极空间 Docker 界面未必支持 build。除非前两种方式都不可用，否则不建议。
+需要极空间能运行 Docker build 或 SSH 构建；Rust release 编译较吃 CPU/内存，且极空间 Docker 界面未必支持 build。除非前三种方式都不可用，否则不建议。
 
 ## 4. 首次配置
 
