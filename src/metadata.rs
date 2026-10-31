@@ -411,7 +411,12 @@ pub fn parse_filename(rel_path: &str) -> FilenameInfo {
         if !trimmed.ends_with(')') && !trimmed.ends_with('）') {
             break;
         }
-        let content = &trimmed[index + open.len_utf8()..trimmed.len() - 1];
+        let close_len = if trimmed.ends_with('）') {
+            '）'.len_utf8()
+        } else {
+            ')'.len_utf8()
+        };
+        let content = &trimmed[index + open.len_utf8()..trimmed.len() - close_len];
         let lowered = content.to_lowercase();
         if lowered.contains("z-library")
             || lowered.contains("z-lib")
@@ -448,7 +453,12 @@ fn split_author(stem: &str) -> Option<(String, String)> {
     if !stem.ends_with(')') && !stem.ends_with('）') {
         return None;
     }
-    let content = &stem[index + open.len_utf8()..stem.len() - 1];
+    let close_len = if stem.ends_with('）') {
+        '）'.len_utf8()
+    } else {
+        ')'.len_utf8()
+    };
+    let content = &stem[index + open.len_utf8()..stem.len() - close_len];
     if is_series_or_edition(content) {
         return None;
     }
@@ -732,6 +742,10 @@ mod tests {
                 "中国现代文学三十年 (2018修订本)",
                 "钱理群, 温儒敏, 吴福辉",
             ),
+            ("某书名（全译本）.pdf", "某书名（全译本）", ""),
+            ("某书名（作者甲）.pdf", "某书名", "作者甲"),
+            ("某书名（丛书名）.pdf", "某书名（丛书名）", ""),
+            ("某书名（作者甲） (Z-Library).pdf", "某书名", "作者甲"),
             (
                 "C++之父给你的C++学习路线图（套装共5册） (本贾尼·斯特劳斯特鲁普(Bjarne Stroustrup)) (Z-Library).epub",
                 "C++之父给你的C++学习路线图（套装共5册）",

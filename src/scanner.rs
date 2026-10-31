@@ -209,30 +209,50 @@ impl Scanner {
                 String::new()
             };
             let format = metadata::extension_of(&entry.rel_path);
-            let fallback = metadata::parse_filename(&entry.rel_path);
-            let (mut book, cover, page_count, parse_error) =
-                match metadata::extract(&format, &bytes, &entry.rel_path) {
-                    Ok(extracted) => (
-                        extracted.metadata,
-                        extracted.cover,
-                        extracted.page_count,
+            let fallback = std::panic::catch_unwind(|| metadata::parse_filename(&entry.rel_path))
+                .unwrap_or_else(|_| metadata::FilenameInfo {
+                    title: metadata::basename_of(&entry.rel_path),
+                    author: String::new(),
+                });
+            let extraction = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                metadata::extract(&format, &bytes, &entry.rel_path)
+            }));
+            let (mut book, cover, page_count, parse_error) = match extraction {
+                Ok(Ok(extracted)) => (
+                    extracted.metadata,
+                    extracted.cover,
+                    extracted.page_count,
+                    None,
+                ),
+                Ok(Err(error)) => {
+                    stats.errors += 1;
+                    errors.push(format!("{}: {error}", entry.rel_path));
+                    (
+                        BookMetadata {
+                            title: fallback.title.clone(),
+                            authors: fallback.author.clone(),
+                            ..Default::default()
+                        },
                         None,
-                    ),
-                    Err(error) => {
-                        stats.errors += 1;
-                        errors.push(format!("{}: {error}", entry.rel_path));
-                        (
-                            BookMetadata {
-                                title: fallback.title.clone(),
-                                authors: fallback.author.clone(),
-                                ..Default::default()
-                            },
-                            None,
-                            0,
-                            Some(error.to_string()),
-                        )
-                    }
-                };
+                        0,
+                        Some(error.to_string()),
+                    )
+                }
+                Err(_) => {
+                    stats.errors += 1;
+                    errors.push(format!("{}: 元数据解析 panic", entry.rel_path));
+                    (
+                        BookMetadata {
+                            title: fallback.title.clone(),
+                            authors: fallback.author.clone(),
+                            ..Default::default()
+                        },
+                        None,
+                        0,
+                        Some("元数据解析 panic".to_string()),
+                    )
+                }
+            };
             if book.title.trim().is_empty() {
                 book.title = fallback.title.clone();
             }
