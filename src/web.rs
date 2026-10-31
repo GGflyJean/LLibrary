@@ -123,8 +123,8 @@ struct IndexQuery {
     q: Option<String>,
     publisher: Option<String>,
     format: Option<String>,
-    source: Option<i64>,
-    page: Option<i64>,
+    source: Option<String>,
+    page: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -170,8 +170,17 @@ async fn index(
     if let Some(response) = require_web(&state, &headers) {
         return response;
     }
-    let page = query.page.unwrap_or(1).max(1);
-    let source_id = query.source.filter(|value| *value > 0);
+    let page = query
+        .page
+        .as_deref()
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(1)
+        .max(1);
+    let source_id = query
+        .source
+        .as_deref()
+        .and_then(|value| value.parse::<i64>().ok())
+        .filter(|value| *value > 0);
     let filter = WorkFilter {
         query: clean(query.q),
         publisher: clean(query.publisher),
@@ -1005,6 +1014,14 @@ mod tests {
         let response = app
             .clone()
             .oneshot(request("/?source=1", true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(body_text(response).await.contains("论语译注"));
+
+        let response = app
+            .clone()
+            .oneshot(request("/?q=&publisher=&format=&source=&page=", true))
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
