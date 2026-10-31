@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}扫描来源 - LLibrary{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>扫描来源</h1>
+  <a href="/">返回书库</a>
+</div>
+
+{% if !notice.is_empty() %}<div class="banner">{{ notice }}</div>{% endif %}
+{% if !error.is_empty() %}<p class="error">{{ error }}</p>{% endif %}
+
+<section class="source-form">
+  <h2>添加来源</h2>
+  <form method="post" action="/sources">
+    <label>名称
+      <input name="name" required placeholder="主书库">
+    </label>
+    <label>类型
+      <select name="kind">
+        <option value="local">本地路径</option>
+        <option value="webdav">WebDAV</option>
+      </select>
+    </label>
+    <label>位置
+      <input name="location" required placeholder="/sources/public/书 或 http://...">
+      <small class="muted">本地路径必须是容器内已挂载的目录；新增宿主目录需先在 Compose 中增加挂载。</small>
+    </label>
+    <label>WebDAV 用户名（仅 WebDAV）<input name="username" autocomplete="off"></label>
+    <label>WebDAV 密码（仅 WebDAV）<input name="password" type="password" autocomplete="new-password"></label>
+    <label class="inline"><input type="checkbox" name="scan_on_add" checked> 添加后立即扫描</label>
+    <label>定时扫描（可选，标准 5 段 cron）<input name="schedule" placeholder="0 3 * * *"></label>
+    {% if !has_secret %}<p class="muted">当前未配置 LLIBRARY_SECRET，暂不能添加 WebDAV 来源。</p>{% endif %}
+    <button type="submit">添加来源</button>
+  </form>
+</section>
+
+<h2>已有来源</h2>
+{% if sources.is_empty() %}
+<p class="empty">还没有来源。</p>
+{% else %}
+<table class="files">
+  <thead>
+    <tr><th>ID</th><th>名称</th><th>类型</th><th>位置</th><th>启用</th><th>添加后扫描</th><th>定时</th><th>最近扫描</th><th>操作</th></tr>
+  </thead>
+  <tbody>
+  {% for source in sources %}
+    <tr>
+      <td>{{ source.id }}</td>
+      <td>{{ source.name }}</td>
+      <td>{{ source.kind }}</td>
+      <td class="path">{{ source.location }}</td>
+      <td>{% if source.enabled %}是{% else %}否{% endif %}</td>
+      <td>{% if source.scan_on_add %}是{% else %}否{% endif %}</td>
+      <td>{{ source.schedule }}</td>
+      <td>
+        {{ source.last_status }}
+        {% if !source.last_time.is_empty() %}<br><span class="muted">{{ source.last_time }}</span>{% endif %}
+        {% if !source.last_error.is_empty() %}<br><span class="error">{{ source.last_error }}</span>{% endif %}
+      </td>
+      <td>
+        <form method="post" action="/sources/{{ source.id }}/scan" class="inline"><button type="submit">扫描</button></form>
+        <form method="post" action="/sources/{{ source.id }}/delete" class="inline" onsubmit="return confirm('删除来源不会删除书籍文件，确定？');"><button type="submit" class="danger">删除</button></form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

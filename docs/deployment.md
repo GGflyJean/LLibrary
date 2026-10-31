@@ -88,14 +88,21 @@ docker save llibrary:local -o llibrary-local.tar
 
 ## 4. 首次配置
 
-1. 打开 `http://<nas>:8080`，用 `AUTH_USER` / 密码登录。
-2. 在极空间终端（SSH，或 Docker 界面里的容器终端）执行：
-   ```bash
-   docker exec -it llibrary llibrary sources add \
-     --name 主书库 --kind local --location /sources/public/书
-   ```
-   这一步添加来源并立即触发首次扫描；容器内已包含 CLI，不需要源码。
+1. 打开 `http://<nas>:8080`（或你映射的宿主端口），用 `AUTH_USER` / 密码登录。
+2. 打开 `/sources`，在“添加来源”里填：
+   - 名称：`主书库`
+   - 类型：本地路径
+   - 位置：`/sources/public/书`
+   - 勾选“添加后立即扫描”
+   然后提交。页面会显示来源和最近扫描状态，不需要容器终端。
 3. 扫描页 `/scans` 查看进度与报告；`/api/scans/current` 返回 JSON 进度。
+
+也可以继续用 CLI（脚本/自动化）：
+
+```bash
+docker exec -it llibrary llibrary sources add \
+  --name 主书库 --kind local --location /sources/public/书
+```
 
 ## 5. 结果核对
 

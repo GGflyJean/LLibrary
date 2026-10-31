@@ -433,7 +433,7 @@ impl ScannerHandle {
     }
 }
 
-fn parse_schedule(expression: &str) -> Option<Schedule> {
+pub(crate) fn parse_schedule(expression: &str) -> Option<Schedule> {
     Schedule::from_str(expression).ok().or_else(|| {
         if expression.split_whitespace().count() == 5 {
             Schedule::from_str(&format!("0 {expression}")).ok()

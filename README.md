@@ -57,6 +57,14 @@ cargo run
 
 ## 管理来源
 
+推荐直接在 Web 页面 `/sources` 管理来源：添加本地/WebDAV 来源、删除来源、对单个来源触发扫描，不需要容器终端。
+
+- 本地路径填**容器内路径**，例如 `/sources/public/书`；新增宿主目录仍需先在 Compose 中增加挂载。
+- WebDAV 来源需要用户名/密码，并要求配置 `LLIBRARY_SECRET`。
+- 删除来源只清理索引，不会删除书库文件。
+
+CLI 仍然可用，适合脚本或首次批量操作：
+
 ```bash
 # 添加本地来源；默认添加后立即扫描
 DATA_DIR=./data AUTH_USER=reader AUTH_PASSWORD_HASH='<hash>' \

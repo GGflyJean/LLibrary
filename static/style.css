@@ -143,3 +143,20 @@ table.files .path { word-break: break-all; color: var(--muted); }
   .detail { grid-template-columns: 1fr; }
   .detail .cover { max-width: 14rem; }
 }
+
+.inline { display: inline; }
+button.danger { background: var(--danger); border-color: var(--danger); }
+.source-form { max-width: 42rem; }
+.source-form h2 { margin-top: 0; }
+.source-form label { display: block; margin: 0.7rem 0; }
+.source-form input:not([type="checkbox"]), .source-form select {
+  display: block;
+  width: 100%;
+  margin-top: 0.3rem;
+  padding: 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  font-size: 1rem;
+}
+.source-form label.inline { display: flex; align-items: center; gap: 0.45rem; }
+.source-form small { display: block; margin-top: 0.25rem; }

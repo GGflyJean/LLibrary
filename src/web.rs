@@ -1,5 +1,5 @@
 use std::fmt::Write as _;
-use std::path::PathBuf;
+use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -16,6 +16,7 @@ use serde::Deserialize;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
 use tower_http::services::ServeDir;
+use url::Url;
 
 use crate::auth::{self, Auth, SESSION_COOKIE};
 use crate::config::Config;
@@ -23,8 +24,8 @@ use crate::covers::CoverStore;
 use crate::crypto::SecretBox;
 use crate::db::Db;
 use crate::models::{
-    FileRecord, ScanProgress, ScanRun, SourceConfig, SourceKind, SourceOption, WorkFilter,
-    WorkSummary,
+    FileRecord, ScanProgress, ScanRun, SourceConfig, SourceKind, SourceOption, WebDavCredentials,
+    WorkFilter, WorkSummary,
 };
 use crate::scanner::ScannerHandle;
 use crate::sources::SourceBackend;
@@ -118,6 +119,45 @@ impl ScansTemplate {
     }
 }
 
+#[derive(Debug, Clone)]
+struct SourceView {
+    id: i64,
+    name: String,
+    kind: String,
+    location: String,
+    enabled: bool,
+    scan_on_add: bool,
+    schedule: String,
+    last_status: String,
+    last_time: String,
+    last_error: String,
+}
+
+#[derive(Template)]
+#[template(path = "sources.html")]
+struct SourcesTemplate {
+    sources: Vec<SourceView>,
+    notice: String,
+    error: String,
+    has_secret: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct SourceForm {
+    name: String,
+    kind: String,
+    location: String,
+    username: Option<String>,
+    password: Option<String>,
+    scan_on_add: Option<String>,
+    schedule: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SourcesQuery {
+    added: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 struct IndexQuery {
     q: Option<String>,
@@ -154,6 +194,9 @@ pub fn router(state: AppState) -> Router {
         .route("/logout", post(logout))
         .route("/scans", get(scans_page))
         .route("/scan", post(scan_now))
+        .route("/sources", get(sources_page).post(add_source))
+        .route("/sources/{id}/delete", post(delete_source))
+        .route("/sources/{id}/scan", post(scan_source))
         .route("/api/scans", get(api_scans))
         .route("/api/scans/current", get(api_scan_current))
         .route("/api/scans/{id}", get(api_scan))
@@ -675,6 +718,198 @@ async fn scan_now(State(state): State<AppState>, headers: HeaderMap) -> Response
     }
 }
 
+async fn sources_page(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<SourcesQuery>,
+) -> Response {
+    if let Some(response) = require_web(&state, &headers) {
+        return response;
+    }
+    let sources = match load_source_views(&state).await {
+        Ok(sources) => sources,
+        Err(error) => return internal(error),
+    };
+    render(SourcesTemplate {
+        sources,
+        notice: if query.added.is_some() {
+            "来源已添加".to_string()
+        } else {
+            String::new()
+        },
+        error: String::new(),
+        has_secret: state.config.secret.is_some(),
+    })
+}
+
+async fn add_source(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Form(form): Form<SourceForm>,
+) -> Response {
+    if let Some(response) = require_web(&state, &headers) {
+        return response;
+    }
+    match save_source(&state, form).await {
+        Ok(()) => Redirect::to("/sources?added=1").into_response(),
+        Err(error) => {
+            let sources = load_source_views(&state).await.unwrap_or_default();
+            render(SourcesTemplate {
+                sources,
+                notice: String::new(),
+                error: error.to_string(),
+                has_secret: state.config.secret.is_some(),
+            })
+        }
+    }
+}
+
+async fn save_source(state: &AppState, form: SourceForm) -> Result<()> {
+    let name = form.name.trim().to_string();
+    if name.is_empty() {
+        anyhow::bail!("名称不能为空");
+    }
+    let location = form.location.trim().to_string();
+    if location.is_empty() {
+        anyhow::bail!("位置不能为空");
+    }
+    let kind =
+        SourceKind::parse(form.kind.trim()).ok_or_else(|| anyhow::anyhow!("未知来源类型"))?;
+    let schedule = form
+        .schedule
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    if let Some(schedule) = &schedule {
+        if crate::scanner::parse_schedule(schedule).is_none() {
+            anyhow::bail!("cron 表达式无效，例如 0 3 * * *");
+        }
+    }
+    let scan_on_add = form.scan_on_add.is_some();
+    let encrypted = match kind {
+        SourceKind::Local => {
+            if !FsPath::new(&location).is_dir() {
+                anyhow::bail!("容器内路径不存在或不是目录: {location}");
+            }
+            None
+        }
+        SourceKind::WebDav => {
+            let username = form
+                .username
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            let password = form
+                .password
+                .as_deref()
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            let (Some(username), Some(password)) = (username, password) else {
+                anyhow::bail!("WebDAV 来源需要用户名和密码");
+            };
+            let url = Url::parse(&location)
+                .map_err(|error| anyhow::anyhow!("WebDAV URL 无效: {error}"))?;
+            if !matches!(url.scheme(), "http" | "https") {
+                anyhow::bail!("WebDAV URL 必须是 http 或 https");
+            }
+            let secret =
+                state.config.secret.as_deref().ok_or_else(|| {
+                    anyhow::anyhow!("未配置 LLIBRARY_SECRET，无法保存 WebDAV 凭据")
+                })?;
+            let credentials = WebDavCredentials { username, password };
+            Some(SecretBox::new(secret).encode_credentials(&credentials)?)
+        }
+    };
+    let hash_policy = match kind {
+        SourceKind::Local => "hash",
+        SourceKind::WebDav => "none",
+    };
+    let db = state.db.clone();
+    let id = blocking(move || {
+        db.insert_source(
+            &name,
+            kind,
+            &location,
+            encrypted.as_deref(),
+            true,
+            scan_on_add,
+            schedule.as_deref(),
+            hash_policy,
+        )
+    })
+    .await?;
+    if scan_on_add {
+        state.scanner.enqueue_source(id).await?;
+    }
+    Ok(())
+}
+
+async fn delete_source(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Response {
+    if let Some(response) = require_web(&state, &headers) {
+        return response;
+    }
+    let db = state.db.clone();
+    match blocking(move || db.delete_source(id)).await {
+        Ok(_) => Redirect::to("/sources").into_response(),
+        Err(error) => internal(error),
+    }
+}
+
+async fn scan_source(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Response {
+    if let Some(response) = require_web(&state, &headers) {
+        return response;
+    }
+    match state.scanner.enqueue_source(id).await {
+        Ok(()) => Redirect::to("/sources").into_response(),
+        Err(error) => internal(error),
+    }
+}
+
+async fn load_source_views(state: &AppState) -> Result<Vec<SourceView>> {
+    let db = state.db.clone();
+    blocking(move || {
+        let sources = db.list_sources()?;
+        let mut views = Vec::new();
+        for source in sources {
+            let run = db.latest_scan_for_source(source.id)?;
+            let (last_status, last_time, last_error) = match run {
+                Some(run) => (
+                    run.status.clone(),
+                    run.finished_at
+                        .clone()
+                        .unwrap_or_else(|| run.started_at.clone()),
+                    run.error.clone().unwrap_or_default(),
+                ),
+                None => ("从未扫描".to_string(), String::new(), String::new()),
+            };
+            views.push(SourceView {
+                id: source.id,
+                name: source.name,
+                kind: source.kind.as_str().to_string(),
+                location: source.location,
+                enabled: source.enabled,
+                scan_on_add: source.scan_on_add,
+                schedule: source.schedule.unwrap_or_default(),
+                last_status,
+                last_time,
+                last_error,
+            });
+        }
+        Ok(views)
+    })
+    .await
+}
+
 async fn api_scans(State(state): State<AppState>, headers: HeaderMap) -> Response {
     if let Some(response) = require_api(&state, &headers) {
         return response;
@@ -901,6 +1136,17 @@ mod tests {
             builder = builder.header(header::AUTHORIZATION, basic());
         }
         builder.body(Body::empty()).unwrap()
+    }
+
+    fn post_form(uri: &str, body: &str, authenticated: bool) -> Request<Body> {
+        let mut builder = Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded");
+        if authenticated {
+            builder = builder.header(header::AUTHORIZATION, basic());
+        }
+        builder.body(Body::from(body.to_string())).unwrap()
     }
 
     fn test_state() -> (tempfile::TempDir, AppState, i64, i64) {
@@ -1361,6 +1607,90 @@ mod tests {
         let body = body_text(response).await;
         assert!(body.contains("缺失"));
         assert!(body.contains("重复"));
+    }
+
+    #[tokio::test]
+    async fn sources_page_and_management() {
+        let (dir, state, _work, _file) = test_state();
+        let app = router(state.clone());
+
+        let response = app
+            .clone()
+            .oneshot(request("/sources", false))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+
+        let response = app
+            .clone()
+            .oneshot(request("/sources", true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(body_text(response).await.contains("添加来源"));
+
+        let path = dir.path().to_string_lossy().to_string();
+        let form = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("name", "新来源")
+            .append_pair("kind", "local")
+            .append_pair("location", &path)
+            .finish();
+        let response = app
+            .clone()
+            .oneshot(post_form("/sources", &form, true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        let sources = state.db.list_sources().unwrap();
+        assert_eq!(sources.len(), 2);
+        let new_id = sources
+            .iter()
+            .find(|source| source.name == "新来源")
+            .unwrap()
+            .id;
+
+        let response = app
+            .clone()
+            .oneshot(post_form(&format!("/sources/{new_id}/scan"), "", true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+
+        let response = app
+            .clone()
+            .oneshot(post_form(&format!("/sources/{new_id}/delete"), "", true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert_eq!(state.db.list_sources().unwrap().len(), 1);
+
+        let invalid = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("name", "坏路径")
+            .append_pair("kind", "local")
+            .append_pair("location", "/definitely/not/a/directory")
+            .finish();
+        let response = app
+            .clone()
+            .oneshot(post_form("/sources", &invalid, true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(body_text(response).await.contains("不存在"));
+
+        let webdav = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("name", "远程")
+            .append_pair("kind", "webdav")
+            .append_pair("location", "http://example.com/books/")
+            .append_pair("username", "reader")
+            .append_pair("password", "secret")
+            .finish();
+        let response = app
+            .clone()
+            .oneshot(post_form("/sources", &webdav, true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(body_text(response).await.contains("LLIBRARY_SECRET"));
     }
 
     #[tokio::test]

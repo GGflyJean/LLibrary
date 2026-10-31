@@ -310,6 +310,19 @@ impl Db {
         Ok(out)
     }
 
+    pub fn latest_scan_for_source(&self, source_id: i64) -> Result<Option<ScanRun>> {
+        let conn = self.connection()?;
+        let row = conn
+            .query_row(
+                "SELECT id, source_id, started_at, finished_at, status, stats_json, error
+                 FROM scan_runs WHERE source_id = ?1 ORDER BY id DESC LIMIT 1",
+                params![source_id],
+                scan_run_from_row,
+            )
+            .optional()?;
+        Ok(row)
+    }
+
     pub fn find_file(&self, source_id: i64, rel_path: &str) -> Result<Option<FileRecord>> {
         let conn = self.connection()?;
         let row = conn
