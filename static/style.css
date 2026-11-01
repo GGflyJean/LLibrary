@@ -196,3 +196,36 @@ button.danger { background: var(--danger); border-color: var(--danger); }
 }
 body.reader-open { overflow: hidden; }
 td.actions a, td.actions button { margin-right: 0.5rem; }
+
+.clc-level1 {
+  margin: 0.8rem 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  overflow: hidden;
+}
+.clc-level1 > summary {
+  cursor: pointer;
+  padding: 0.75rem 1rem;
+  font-weight: 600;
+  font-size: 1.05rem;
+}
+.clc-level2 {
+  margin: 0.4rem 0.8rem 0.8rem;
+  background: #fbfaf7;
+  border: 1px solid var(--line);
+  border-radius: 0.55rem;
+}
+.clc-level2 > summary {
+  cursor: pointer;
+  padding: 0.55rem 0.8rem;
+  font-weight: 500;
+}
+.clc-level2 .grid { padding: 0.8rem; }
+.clc-code {
+  display: inline-block;
+  min-width: 2.6rem;
+  color: var(--accent);
+  font-weight: 700;
+}
+details > summary { user-select: none; }

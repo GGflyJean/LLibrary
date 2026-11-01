@@ -37,27 +37,42 @@
   <span class="muted">共 {{ total }} 个作品</span>
 </div>
 <div id="results">
-{% if works.is_empty() %}
-  <p class="empty">没有找到作品。</p>
+{% if searching %}
+  {% if works.is_empty() %}
+    <p class="empty">没有找到作品。</p>
+  {% else %}
+    <p class="muted"><a href="/">← 返回分类浏览</a></p>
+    <div class="grid">
+    {% for work in works %}
+      {% include "_card.html" %}
+    {% endfor %}
+    </div>
+    <div class="pager">
+      {% if prev_page > 0 %}<a href="?q={{ query }}&publisher={{ publisher }}&format={{ format }}&source={{ source_id }}&page={{ prev_page }}">上一页</a>{% endif %}
+      <span>第 {{ page }} / {{ total_pages }} 页</span>
+      {% if next_page > 0 %}<a href="?q={{ query }}&publisher={{ publisher }}&format={{ format }}&source={{ source_id }}&page={{ next_page }}">下一页</a>{% endif %}
+    </div>
+  {% endif %}
 {% else %}
-  <div class="grid">
-  {% for work in works %}
-    <a class="card" href="/works/{{ work.id }}">
-      <img src="{{ work.cover_url() }}" alt="" loading="lazy">
-      <div class="card-body">
-        <h3>{{ work.title }}</h3>
-        <p class="authors">{{ work.authors_label() }}</p>
-        <p class="meta">{{ work.publisher }}</p>
-        <p class="badges">{{ work.formats_label() }}{% if work.all_missing %} · 缺失{% endif %}{% if work.has_duplicate %} · 重复{% endif %}</p>
-      </div>
-    </a>
-  {% endfor %}
-  </div>
-  <div class="pager">
-    {% if prev_page > 0 %}<a href="?q={{ query }}&publisher={{ publisher }}&format={{ format }}&source={{ source_id }}&page={{ prev_page }}">上一页</a>{% endif %}
-    <span>第 {{ page }} / {{ total_pages }} 页</span>
-    {% if next_page > 0 %}<a href="?q={{ query }}&publisher={{ publisher }}&format={{ format }}&source={{ source_id }}&page={{ next_page }}">下一页</a>{% endif %}
-  </div>
+  {% if tree.is_empty() %}
+    <p class="empty">没有找到作品。</p>
+  {% else %}
+    {% for top in tree %}
+    <details class="clc-level1">
+      <summary><span class="clc-code">{{ top.code }}</span> {{ top.label }} <span class="muted">({{ top.count }})</span></summary>
+      {% for group in top.children %}
+      <details class="clc-level2">
+        <summary><span class="clc-code">{{ group.code }}</span> {{ group.label }} <span class="muted">({{ group.count }})</span></summary>
+        <div class="grid">
+          {% for work in group.works %}
+            {% include "_card.html" %}
+          {% endfor %}
+        </div>
+      </details>
+      {% endfor %}
+    </details>
+    {% endfor %}
+  {% endif %}
 {% endif %}
 </div>
 {% endblock %}

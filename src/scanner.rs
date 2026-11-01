@@ -271,6 +271,14 @@ impl Scanner {
                 BookMetadata::default()
             };
             self.db.update_work_metadata(work_id, &update, None)?;
+            if let Some((code, label)) = crate::clc::classify(
+                &book.title,
+                &book.authors,
+                &book.publisher,
+                &book.description,
+            ) {
+                self.db.set_work_clc_if_empty(work_id, &code, &label)?;
+            }
 
             let cover_url = if format == "epub" {
                 match cover {
@@ -308,6 +316,9 @@ impl Scanner {
         }
 
         stats.missing = self.db.mark_missing(source_id, &seen)?;
+        if let Err(error) = crate::clc::classify_unclassified(&self.db) {
+            tracing::warn!(%error, "自动分类未完成");
+        }
         stats.duration_ms = started.elapsed().as_millis();
         let status = if stats.errors > 0 {
             "completed_with_errors"

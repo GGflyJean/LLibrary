@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod clc;
 pub mod config;
 pub mod covers;
 pub mod crypto;

@@ -17,6 +17,15 @@ pub struct Db {
 }
 
 #[derive(Debug, Clone)]
+pub struct UnclassifiedWork {
+    pub id: i64,
+    pub title: String,
+    pub authors: String,
+    pub publisher: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct NewFile {
     pub work_id: i64,
     pub source_id: i64,
@@ -556,7 +565,7 @@ impl Db {
         let (where_sql, values) = build_work_where(filter);
         let sql = format!(
             "SELECT w.id, w.title, w.authors, w.publisher, w.isbn, w.description, w.language,
-                    w.pub_date, w.cover_path,
+                    w.pub_date, w.clc_code, w.clc_label, w.cover_path,
                     (SELECT GROUP_CONCAT(DISTINCT f.format) FROM files f WHERE f.work_id = w.id AND f.missing = 0),
                     (SELECT COUNT(*) FROM files f WHERE f.work_id = w.id),
                     (SELECT COUNT(*) FROM files f WHERE f.work_id = w.id AND f.missing = 0),
@@ -591,7 +600,7 @@ impl Db {
         let work = conn
             .query_row(
                 "SELECT w.id, w.title, w.authors, w.publisher, w.isbn, w.description, w.language,
-                        w.pub_date, w.cover_path,
+                        w.pub_date, w.clc_code, w.clc_label, w.cover_path,
                         (SELECT GROUP_CONCAT(DISTINCT f.format) FROM files f WHERE f.work_id = w.id AND f.missing = 0),
                         (SELECT COUNT(*) FROM files f WHERE f.work_id = w.id),
                         (SELECT COUNT(*) FROM files f WHERE f.work_id = w.id AND f.missing = 0),
@@ -637,7 +646,7 @@ impl Db {
         };
         let sql = format!(
             "SELECT w.id, w.title, w.authors, w.publisher, w.isbn, w.description, w.language,
-                    w.pub_date, w.cover_path,
+                    w.pub_date, w.clc_code, w.clc_label, w.cover_path,
                     (SELECT GROUP_CONCAT(DISTINCT f.format) FROM files f WHERE f.work_id = w.id AND f.missing = 0),
                     (SELECT COUNT(*) FROM files f WHERE f.work_id = w.id),
                     (SELECT COUNT(*) FROM files f WHERE f.work_id = w.id AND f.missing = 0),
@@ -649,6 +658,70 @@ impl Db {
         );
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(params![publisher, limit], work_from_row)?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    pub fn set_work_clc(&self, id: i64, code: &str, label: &str) -> Result<()> {
+        let conn = self.connection()?;
+        conn.execute(
+            "UPDATE works SET clc_code = ?1, clc_label = ?2, updated_at = ?3 WHERE id = ?4",
+            params![code, label, now(), id],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_work_clc_if_empty(&self, id: i64, code: &str, label: &str) -> Result<()> {
+        let conn = self.connection()?;
+        conn.execute(
+            "UPDATE works SET clc_code = ?1, clc_label = ?2, updated_at = ?3
+             WHERE id = ?4 AND clc_code = ''",
+            params![code, label, now(), id],
+        )?;
+        Ok(())
+    }
+
+    pub fn unclassified_works(&self, limit: i64) -> Result<Vec<UnclassifiedWork>> {
+        let conn = self.connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, title, authors, publisher, description
+             FROM works WHERE clc_code = '' ORDER BY id LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit], |row| {
+            Ok(UnclassifiedWork {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                authors: row.get(2)?,
+                publisher: row.get(3)?,
+                description: row.get(4)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    pub fn list_works_tree(&self, filter: &WorkFilter) -> Result<Vec<WorkSummary>> {
+        let conn = self.connection()?;
+        let (where_sql, values) = build_work_where(filter);
+        let sql = format!(
+            "SELECT w.id, w.title, w.authors, w.publisher, w.isbn, w.description, w.language,
+                    w.pub_date, w.clc_code, w.clc_label, w.cover_path,
+                    (SELECT GROUP_CONCAT(DISTINCT f.format) FROM files f WHERE f.work_id = w.id AND f.missing = 0),
+                    (SELECT COUNT(*) FROM files f WHERE f.work_id = w.id),
+                    (SELECT COUNT(*) FROM files f WHERE f.work_id = w.id AND f.missing = 0),
+                    (SELECT MAX(f.is_duplicate) FROM files f WHERE f.work_id = w.id)
+             FROM works w
+             {where_sql}
+             ORDER BY w.clc_code, w.sort_title, w.id"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(values.iter()), work_from_row)?;
         let mut out = Vec::new();
         for row in rows {
             out.push(row?);
@@ -723,10 +796,10 @@ fn file_from_row(row: &Row<'_>) -> rusqlite::Result<FileRecord> {
 }
 
 fn work_from_row(row: &Row<'_>) -> rusqlite::Result<WorkSummary> {
-    let formats_raw: Option<String> = row.get(9)?;
-    let total: i64 = row.get(10)?;
-    let available: i64 = row.get(11)?;
-    let duplicate: Option<i64> = row.get(12)?;
+    let formats_raw: Option<String> = row.get(11)?;
+    let total: i64 = row.get(12)?;
+    let available: i64 = row.get(13)?;
+    let duplicate: Option<i64> = row.get(14)?;
     let formats = formats_raw
         .unwrap_or_default()
         .split(',')
@@ -742,7 +815,9 @@ fn work_from_row(row: &Row<'_>) -> rusqlite::Result<WorkSummary> {
         description: row.get(5)?,
         language: row.get(6)?,
         pub_date: row.get(7)?,
-        cover_path: row.get(8)?,
+        clc_code: row.get(8)?,
+        clc_label: row.get(9)?,
+        cover_path: row.get(10)?,
         formats,
         all_missing: total > 0 && available == 0,
         has_duplicate: duplicate.unwrap_or(0) > 0,
@@ -982,6 +1057,29 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(db.list_works(&filter, 20, 0).expect("search").len(), 1);
+    }
+
+    #[test]
+    fn classifies_unclassified_works() {
+        let (_dir, db) = temp_db();
+        let work = db
+            .insert_work(
+                "clc",
+                &BookMetadata {
+                    title: "论语译注".to_string(),
+                    authors: "杨伯峻".to_string(),
+                    publisher: "中华书局".to_string(),
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+        let count = crate::clc::classify_unclassified(&db).unwrap();
+        assert_eq!(count, 1);
+        let detail = db.get_work(work).unwrap().unwrap();
+        assert_eq!(detail.work.clc_code, "B2");
+        assert_eq!(detail.work.clc_label, "中国哲学");
+        assert!(db.unclassified_works(10).unwrap().is_empty());
     }
 
     #[test]

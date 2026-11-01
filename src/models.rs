@@ -89,6 +89,8 @@ pub struct WorkSummary {
     pub description: String,
     pub language: String,
     pub pub_date: String,
+    pub clc_code: String,
+    pub clc_label: String,
     pub cover_path: Option<String>,
     pub formats: Vec<String>,
     pub all_missing: bool,

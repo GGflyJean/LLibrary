@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
@@ -54,6 +55,8 @@ struct IndexTemplate {
     source_options: Vec<SourceOption>,
     source_id: i64,
     works: Vec<WorkSummary>,
+    tree: Vec<ClcTopGroup>,
+    searching: bool,
     total: i64,
     page: i64,
     total_pages: i64,
@@ -132,6 +135,22 @@ impl ScansTemplate {
             .map(|progress| progress.total)
             .unwrap_or(0)
     }
+}
+
+#[derive(Debug, Clone)]
+struct ClcWorkGroup {
+    code: String,
+    label: String,
+    works: Vec<WorkSummary>,
+    count: usize,
+}
+
+#[derive(Debug, Clone)]
+struct ClcTopGroup {
+    code: String,
+    label: String,
+    count: usize,
+    children: Vec<ClcWorkGroup>,
 }
 
 #[derive(Debug, Clone)]
@@ -249,14 +268,21 @@ async fn index(
     let db = state.db.clone();
     let filter_db = filter.clone();
     let result = blocking(move || {
-        let works = db.list_works(&filter_db, PER_PAGE, (page - 1) * PER_PAGE)?;
-        let total = db.count_works(&filter_db)?;
         let publishers = db.publishers()?;
         let sources = db.list_sources()?;
-        Ok((works, total, publishers, sources))
+        if filter_db.query.is_some() {
+            let works = db.list_works(&filter_db, PER_PAGE, (page - 1) * PER_PAGE)?;
+            let total = db.count_works(&filter_db)?;
+            Ok((true, works, Vec::new(), total, publishers, sources))
+        } else {
+            let works = db.list_works_tree(&filter_db)?;
+            let total = works.len() as i64;
+            let tree = build_clc_tree(works);
+            Ok((false, Vec::new(), tree, total, publishers, sources))
+        }
     })
     .await;
-    let (works, total, publishers, sources) = match result {
+    let (searching, works, tree, total, publishers, sources) = match result {
         Ok(value) => value,
         Err(error) => return internal(error),
     };
@@ -268,7 +294,11 @@ async fn index(
             selected: source_id == Some(source.id),
         })
         .collect();
-    let total_pages = ((total + PER_PAGE - 1) / PER_PAGE).max(1);
+    let total_pages = if searching {
+        ((total + PER_PAGE - 1) / PER_PAGE).max(1)
+    } else {
+        1
+    };
     let progress = state.scanner.progress();
     let template = IndexTemplate {
         query: filter.query.clone().unwrap_or_default(),
@@ -282,11 +312,17 @@ async fn index(
         source_options,
         source_id: source_id.unwrap_or(0),
         works,
+        tree,
+        searching,
         total,
         page,
         total_pages,
-        prev_page: if page > 1 { page - 1 } else { 0 },
-        next_page: if page < total_pages { page + 1 } else { 0 },
+        prev_page: if searching && page > 1 { page - 1 } else { 0 },
+        next_page: if searching && page < total_pages {
+            page + 1
+        } else {
+            0
+        },
         scanning: progress.is_some(),
         scan_source: progress
             .as_ref()
@@ -1180,6 +1216,71 @@ fn opds_response(xml: String, kind: &str) -> Response {
     response
 }
 
+fn build_clc_tree(works: Vec<WorkSummary>) -> Vec<ClcTopGroup> {
+    let mut map: BTreeMap<String, BTreeMap<String, Vec<WorkSummary>>> = BTreeMap::new();
+    for work in works {
+        let raw = work.clc_code.trim();
+        let (top_key, level2_key) = if raw.is_empty() || raw == crate::clc::UNCLASSIFIED_CODE {
+            ("~".to_string(), "~".to_string())
+        } else {
+            let top = raw.chars().next().unwrap_or('~').to_string();
+            (top, raw.to_string())
+        };
+        map.entry(top_key)
+            .or_default()
+            .entry(level2_key)
+            .or_default()
+            .push(work);
+    }
+
+    let mut groups = Vec::new();
+    for (top_key, children_map) in map {
+        let label = if top_key == "~" {
+            "未分类".to_string()
+        } else {
+            crate::clc::level1_label(&top_key).to_string()
+        };
+        let mut children = Vec::new();
+        for (code, works) in children_map {
+            let label = if code == "~" {
+                "未分类".to_string()
+            } else {
+                works
+                    .first()
+                    .map(|work| {
+                        if work.clc_label.is_empty() {
+                            crate::clc::level2_label(&code)
+                                .unwrap_or(code.as_str())
+                                .to_string()
+                        } else {
+                            work.clc_label.clone()
+                        }
+                    })
+                    .unwrap_or_else(|| code.clone())
+            };
+            let count = works.len();
+            children.push(ClcWorkGroup {
+                code: if code == "~" { String::new() } else { code },
+                label,
+                works,
+                count,
+            });
+        }
+        let count = children.iter().map(|group| group.count).sum();
+        groups.push(ClcTopGroup {
+            code: if top_key == "~" {
+                String::new()
+            } else {
+                top_key
+            },
+            label,
+            count,
+            children,
+        });
+    }
+    groups
+}
+
 fn xml_escape(value: &str) -> String {
     value
         .replace('&', "&amp;")
@@ -1594,7 +1695,11 @@ mod tests {
         }
         let app = router(state);
 
-        let response = app.clone().oneshot(request("/", true)).await.unwrap();
+        let response = app
+            .clone()
+            .oneshot(request("/?q=A&page=1", true))
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         let first = body_text(response).await;
         assert!(first.contains("A00"));
@@ -1602,15 +1707,15 @@ mod tests {
 
         let response = app
             .clone()
-            .oneshot(request("/?page=2", true))
+            .oneshot(request("/?q=A&page=2", true))
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        assert!(body_text(response).await.contains("论语译注"));
+        assert!(body_text(response).await.contains("A40"));
 
         let response = app
             .clone()
-            .oneshot(request("/?page=99", true))
+            .oneshot(request("/?q=A&page=99", true))
             .await
             .unwrap();
         assert!(body_text(response).await.contains("没有找到作品"));
@@ -1641,6 +1746,43 @@ mod tests {
             response.headers().get(header::CONTENT_TYPE).unwrap(),
             "image/png"
         );
+    }
+
+    #[tokio::test]
+    async fn homepage_uses_clc_tree() {
+        let (_dir, state, work, _file) = test_state();
+        let db = state.db.clone();
+        db.set_work_clc(work, "I2", "中国文学").unwrap();
+        let other = db
+            .insert_work(
+                "clc-k2",
+                &BookMetadata {
+                    title: "中国通史".to_string(),
+                    authors: "作者".to_string(),
+                    publisher: "中华书局".to_string(),
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+        db.set_work_clc(other, "K2", "中国史").unwrap();
+        let app = router(state);
+
+        let response = app.clone().oneshot(request("/", true)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_text(response).await;
+        assert!(body.contains("clc-level1"));
+        assert!(body.contains("中国文学"));
+        assert!(body.contains("中国史"));
+        assert!(body.contains("论语译注"));
+        assert!(body.contains("中国通史"));
+
+        let response = app
+            .clone()
+            .oneshot(request("/?q=论语", true))
+            .await
+            .unwrap();
+        assert!(body_text(response).await.contains("论语译注"));
     }
 
     #[tokio::test]

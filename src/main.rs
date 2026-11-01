@@ -6,6 +6,7 @@ use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
 use llibrary::auth::{self, Auth};
+use llibrary::clc;
 use llibrary::config::Config;
 use llibrary::covers::CoverStore;
 use llibrary::crypto::SecretBox;
@@ -91,6 +92,11 @@ async fn serve() -> Result<()> {
     let config = Config::from_env()?;
     config.ensure_dirs()?;
     let db = Db::open(&config.db_path)?;
+    match clc::classify_unclassified(&db) {
+        Ok(count) if count > 0 => tracing::info!(count, "已补充中图法分类"),
+        Ok(_) => {}
+        Err(error) => tracing::warn!(%error, "启动时自动分类失败"),
+    }
     let covers = CoverStore::new(config.covers_dir())?;
     let auth = Arc::new(Auth::new(
         config.auth_user.clone(),
