@@ -11,8 +11,22 @@
     <span class="reader-title">{{ title }}</span>
     <span class="reader-actions">
       {% if is_epub %}
+        <button type="button" id="reader-toc-toggle">目录</button>
         <button type="button" id="reader-prev">上一页</button>
         <button type="button" id="reader-next">下一页</button>
+        <span class="reader-jump">
+          <input id="reader-percent" type="number" min="0" max="100" step="1" value="0" title="阅读进度百分比">
+          <span class="muted">%</span>
+          <button type="button" id="reader-jump">跳转</button>
+        </span>
+      {% endif %}
+      {% if is_pdf %}
+        <span class="reader-jump">
+          <input id="pdf-page" type="number" min="1" max="{{ page_count }}" value="1" title="页码">
+          <span class="muted">/ {{ page_count }} 页</span>
+          <button type="button" id="pdf-jump">跳转</button>
+        </span>
+        <span class="muted">目录请使用 PDF 查看器工具栏</span>
       {% endif %}
       <a href="{{ download_url }}">下载</a>
       <a href="{{ back_url }}">返回书库</a>
@@ -21,15 +35,22 @@
   </header>
 
   {% if is_epub %}
+  <aside id="reader-toc" class="reader-toc" hidden>
+    <div class="reader-toc-head">
+      <strong>目录</strong>
+      <button type="button" id="reader-toc-close">关闭</button>
+    </div>
+    <div id="reader-toc-list" class="reader-toc-list">正在加载目录…</div>
+  </aside>
   <div id="viewer" data-url="{{ file_url }}" data-file-id="{{ file_id }}"></div>
   <script src="/static/epubjs/jszip.min.js"></script>
   <script src="/static/epubjs/epub.min.js"></script>
   <script>
     (function () {
       const viewer = document.getElementById('viewer');
-      const url = viewer.dataset.url;
-      const key = 'llibrary:progress:' + viewer.dataset.fileId;
-      const book = ePub(url);
+      const fileId = viewer.dataset.fileId;
+      const key = 'llibrary:progress:' + fileId;
+      const book = ePub(viewer.dataset.url);
       const rendition = book.renderTo(viewer, {
         width: '100%',
         height: '100%',
@@ -38,18 +59,94 @@
       });
       const saved = localStorage.getItem(key);
       rendition.display(saved || undefined);
+
+      const percentInput = document.getElementById('reader-percent');
+      const jumpButton = document.getElementById('reader-jump');
+      let locationsReady = false;
+
+      function updatePercent(cfi) {
+        try {
+          percentInput.value = Math.round(book.locations.percentageFromCfi(cfi) * 100);
+        } catch (error) {
+          /* ignore */
+        }
+      }
+
       rendition.on('relocated', function (location) {
         if (location && location.start) {
           localStorage.setItem(key, location.start.cfi);
+          if (locationsReady) updatePercent(location.start.cfi);
         }
       });
-      document.getElementById('reader-prev').addEventListener('click', function () {
-        rendition.prev();
+
+      percentInput.disabled = true;
+      jumpButton.disabled = true;
+      book.ready
+        .then(function () { return book.locations.generate(1600); })
+        .then(function () {
+          locationsReady = true;
+          percentInput.disabled = false;
+          jumpButton.disabled = false;
+          const current = rendition.currentLocation ? rendition.currentLocation() : null;
+          if (current && current.start) updatePercent(current.start.cfi);
+        })
+        .catch(function () { jumpButton.textContent = '不可用'; });
+
+      jumpButton.addEventListener('click', function () {
+        if (!locationsReady) return;
+        const percent = Math.max(0, Math.min(100, Number(percentInput.value) || 0));
+        const cfi = book.locations.cfiFromPercentage(percent / 100);
+        if (cfi) rendition.display(cfi);
       });
-      document.getElementById('reader-next').addEventListener('click', function () {
-        rendition.next();
+
+      const tocPanel = document.getElementById('reader-toc');
+      const tocList = document.getElementById('reader-toc-list');
+      document.getElementById('reader-toc-toggle').addEventListener('click', function () {
+        tocPanel.hidden = false;
       });
+      document.getElementById('reader-toc-close').addEventListener('click', function () {
+        tocPanel.hidden = true;
+      });
+
+      function buildToc(items, depth) {
+        const list = document.createElement('ul');
+        if (depth > 0) list.className = 'reader-toc-sub';
+        items.forEach(function (item) {
+          const li = document.createElement('li');
+          const link = document.createElement('a');
+          link.href = '#';
+          link.textContent = item.label || item.href;
+          link.addEventListener('click', function (event) {
+            event.preventDefault();
+            rendition.display(item.href);
+            tocPanel.hidden = true;
+          });
+          li.appendChild(link);
+          if (item.subitems && item.subitems.length) {
+            li.appendChild(buildToc(item.subitems, depth + 1));
+          }
+          list.appendChild(li);
+        });
+        return list;
+      }
+
+      book.loaded.navigation
+        .then(function (navigation) {
+          const toc = (navigation && navigation.toc) || [];
+          tocList.innerHTML = '';
+          if (!toc.length) {
+            tocList.textContent = '此文件没有目录';
+            return;
+          }
+          tocList.appendChild(buildToc(toc, 0));
+        })
+        .catch(function () { tocList.textContent = '目录加载失败'; });
+
+      document.getElementById('reader-prev').addEventListener('click', function () { rendition.prev(); });
+      document.getElementById('reader-next').addEventListener('click', function () { rendition.next(); });
       document.addEventListener('keydown', function (event) {
+        const tag = event.target && event.target.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA') return;
         if (event.key === 'ArrowLeft') rendition.prev();
         if (event.key === 'ArrowRight') rendition.next();
       });
@@ -58,7 +155,26 @@
   {% endif %}
 
   {% if is_pdf %}
-  <iframe class="pdf-frame" src="{{ file_url }}" title="{{ title }}"></iframe>
+  <iframe
+    class="pdf-frame"
+    id="pdf-frame"
+    src="{{ file_url }}"
+    data-url="{{ file_url }}"
+    data-pages="{{ page_count }}"
+    title="{{ title }}"></iframe>
+  <script>
+    (function () {
+      const frame = document.getElementById('pdf-frame');
+      const pageInput = document.getElementById('pdf-page');
+      const jumpButton = document.getElementById('pdf-jump');
+      jumpButton.addEventListener('click', function () {
+        const pages = Number(frame.dataset.pages) || 1;
+        const page = Math.max(1, Math.min(pages, Number(pageInput.value) || 1));
+        pageInput.value = page;
+        frame.src = frame.dataset.url + '#page=' + page;
+      });
+    })();
+  </script>
   {% endif %}
 
   {% if !supported %}
@@ -71,6 +187,9 @@
   <script>
     (function () {
       const close = document.getElementById('reader-close');
+      if (window.parent !== window) {
+        close.style.display = 'none';
+      }
       close.addEventListener('click', function () {
         if (window.parent !== window) {
           window.parent.postMessage({ type: 'llibrary-close-reader' }, window.location.origin);

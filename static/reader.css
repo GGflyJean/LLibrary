@@ -21,12 +21,12 @@ body.reader-page {
 }
 .reader-title {
   font-weight: 600;
-  max-width: 50vw;
+  max-width: 40vw;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.reader-actions { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
+.reader-actions { display: flex; gap: 0.45rem; align-items: center; flex-wrap: wrap; }
 .reader-actions a, .reader-actions button {
   color: #3d5a80;
   background: none;
@@ -37,8 +37,51 @@ body.reader-page {
   text-decoration: none;
 }
 .reader-actions a:hover, .reader-actions button:hover { text-decoration: underline; }
+.reader-actions button:disabled { color: #999; cursor: default; }
+.reader-jump { display: inline-flex; gap: 0.3rem; align-items: center; }
+.reader-jump input {
+  width: 4.5rem;
+  padding: 0.25rem 0.35rem;
+  border: 1px solid #e2ddd3;
+  border-radius: 0.35rem;
+  font: inherit;
+}
 #viewer { flex: 1; min-height: 0; }
 .pdf-frame { flex: 1; width: 100%; border: 0; background: #fff; }
+.reader-toc {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(22rem, 85vw);
+  background: #fff;
+  border-left: 1px solid #e2ddd3;
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.12);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+}
+.reader-toc[hidden] { display: none; }
+.reader-toc-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.7rem 0.9rem;
+  border-bottom: 1px solid #e2ddd3;
+}
+.reader-toc-head button {
+  border: 0;
+  background: none;
+  color: #3d5a80;
+  cursor: pointer;
+  font: inherit;
+}
+.reader-toc-list { overflow: auto; padding: 0.5rem 0.9rem 1rem; font-size: 0.9rem; }
+.reader-toc-list ul { list-style: none; padding-left: 0; margin: 0; }
+.reader-toc-list ul.reader-toc-sub { padding-left: 1rem; }
+.reader-toc-list li { margin: 0.35rem 0; }
+.reader-toc-list a { color: #23201c; text-decoration: none; }
+.reader-toc-list a:hover { color: #3d5a80; text-decoration: underline; }
 .reader-message {
   max-width: 32rem;
   margin: 3rem auto;
@@ -48,3 +91,4 @@ body.reader-page {
   border-radius: 0.8rem;
   text-align: center;
 }
+.muted { color: #6d675f; }

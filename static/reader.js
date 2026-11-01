@@ -15,21 +15,18 @@
     overlay.setAttribute('role', 'dialog');
     overlay.setAttribute('aria-modal', 'true');
 
-    const bar = document.createElement('div');
-    bar.className = 'reader-overlay-bar';
-    const label = document.createElement('strong');
-    label.textContent = title || '阅读';
     const close = document.createElement('button');
     close.type = 'button';
-    close.textContent = '关闭';
+    close.className = 'reader-overlay-close';
+    close.textContent = '×';
+    close.setAttribute('aria-label', '关闭浮层');
     close.addEventListener('click', closeReader);
-    bar.append(label, close);
 
     const frame = document.createElement('iframe');
     frame.title = title || '阅读';
     frame.src = url;
 
-    overlay.append(bar, frame);
+    overlay.append(frame, close);
     document.body.appendChild(overlay);
     document.body.classList.add('reader-open');
   };

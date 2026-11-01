@@ -85,6 +85,7 @@ struct ReaderTemplate {
     is_epub: bool,
     is_pdf: bool,
     supported: bool,
+    page_count: i64,
     message: String,
 }
 
@@ -371,6 +372,7 @@ async fn read_file(
             is_epub: false,
             is_pdf: false,
             supported: false,
+            page_count: 0,
             message: "此格式暂不支持在线阅读；请下载，或使用同一作品的 EPUB。".to_string(),
         });
     }
@@ -394,6 +396,7 @@ async fn read_file(
         is_epub: format == "epub",
         is_pdf: format == "pdf",
         supported: true,
+        page_count: record.page_count.max(1),
         message: String::new(),
     })
 }
@@ -1712,6 +1715,9 @@ mod tests {
         let body = body_text(response).await;
         assert!(body.contains("epub.min.js"));
         assert!(body.contains(&format!("data-url=\"/files/{file}\"")));
+        assert!(body.contains("reader-toc-toggle"));
+        assert!(body.contains("reader-percent"));
+        assert!(body.contains("reader-jump"));
 
         let response = app
             .clone()
@@ -1755,6 +1761,8 @@ mod tests {
         let body = body_text(response).await;
         assert!(body.contains("<iframe"));
         assert!(body.contains(&format!("/files/{pdf_id}")));
+        assert!(body.contains("pdf-page"));
+        assert!(body.contains("pdf-jump"));
 
         let azw_work = db
             .insert_work(
