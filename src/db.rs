@@ -57,7 +57,6 @@ impl Db {
     fn connection(&self) -> Result<Connection> {
         let conn = Connection::open(&self.path)
             .with_context(|| format!("无法打开数据库 {}", self.path.display()))?;
-        conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.busy_timeout(std::time::Duration::from_secs(30))?;
         Ok(conn)
@@ -153,7 +152,8 @@ impl Db {
                 VALUES ('delete', old.id, old.title, old.authors, old.publisher, old.isbn, old.description);
             END;
 
-            CREATE TRIGGER IF NOT EXISTS works_au AFTER UPDATE ON works BEGIN
+            DROP TRIGGER IF EXISTS works_au;
+            CREATE TRIGGER works_au AFTER UPDATE OF title, authors, publisher, isbn, description ON works BEGIN
                 INSERT INTO works_fts(works_fts, rowid, title, authors, publisher, isbn, description)
                 VALUES ('delete', old.id, old.title, old.authors, old.publisher, old.isbn, old.description);
                 INSERT INTO works_fts(rowid, title, authors, publisher, isbn, description)
@@ -663,6 +663,25 @@ impl Db {
             out.push(row?);
         }
         Ok(out)
+    }
+
+    pub fn set_work_clc_batch(&self, updates: &[(i64, String, String)]) -> Result<()> {
+        if updates.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.connection()?;
+        let tx = conn.transaction()?;
+        let timestamp = now();
+        {
+            let mut stmt = tx.prepare(
+                "UPDATE works SET clc_code = ?1, clc_label = ?2, updated_at = ?3 WHERE id = ?4",
+            )?;
+            for (id, code, label) in updates {
+                stmt.execute(params![code, label, &timestamp, id])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     pub fn set_work_clc(&self, id: i64, code: &str, label: &str) -> Result<()> {

@@ -89,14 +89,10 @@ fn init_tracing() {
 
 async fn serve() -> Result<()> {
     init_tracing();
+    tracing::info!("LLibrary 启动中");
     let config = Config::from_env()?;
     config.ensure_dirs()?;
     let db = Db::open(&config.db_path)?;
-    match clc::classify_unclassified(&db) {
-        Ok(count) if count > 0 => tracing::info!(count, "已补充中图法分类"),
-        Ok(_) => {}
-        Err(error) => tracing::warn!(%error, "启动时自动分类失败"),
-    }
     let covers = CoverStore::new(config.covers_dir())?;
     let auth = Arc::new(Auth::new(
         config.auth_user.clone(),
@@ -120,6 +116,7 @@ async fn serve() -> Result<()> {
             }
         }
     }
+    let db_for_classification = db.clone();
     let state = AppState {
         config: Arc::new(config.clone()),
         db,
@@ -133,6 +130,14 @@ async fn serve() -> Result<()> {
         .await
         .with_context(|| format!("无法监听 {}", config.bind_addr))?;
     tracing::info!(address = %config.bind_addr, "LLibrary 已启动");
+    let classify_db = db_for_classification;
+    tokio::spawn(async move {
+        match tokio::task::spawn_blocking(move || clc::classify_unclassified(&classify_db)).await {
+            Ok(Ok(count)) => tracing::info!(count, "中图法分类回填完成"),
+            Ok(Err(error)) => tracing::warn!(%error, "中图法分类回填失败"),
+            Err(error) => tracing::warn!(%error, "中图法分类任务失败"),
+        }
+    });
     axum::serve(listener, app).await?;
     Ok(())
 }
