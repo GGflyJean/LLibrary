@@ -767,6 +767,7 @@ pub fn classify_unclassified(db: &Db) -> Result<usize> {
             break;
         }
         let batch_len = batch.len();
+        let mut updates = Vec::with_capacity(batch_len);
         for work in batch {
             match classify(
                 &work.title,
@@ -775,14 +776,15 @@ pub fn classify_unclassified(db: &Db) -> Result<usize> {
                 &work.description,
             ) {
                 Some((code, label)) => {
-                    db.set_work_clc(work.id, &code, &label)?;
+                    updates.push((work.id, code, label));
                     classified += 1;
                 }
                 None => {
-                    db.set_work_clc(work.id, UNCLASSIFIED_CODE, "未分类")?;
+                    updates.push((work.id, UNCLASSIFIED_CODE.to_string(), "未分类".to_string()));
                 }
             }
         }
+        db.set_work_clc_batch(&updates)?;
         if batch_len < 500 {
             break;
         }

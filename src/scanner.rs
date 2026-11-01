@@ -271,14 +271,6 @@ impl Scanner {
                 BookMetadata::default()
             };
             self.db.update_work_metadata(work_id, &update, None)?;
-            if let Some((code, label)) = crate::clc::classify(
-                &book.title,
-                &book.authors,
-                &book.publisher,
-                &book.description,
-            ) {
-                self.db.set_work_clc_if_empty(work_id, &code, &label)?;
-            }
 
             let cover_url = if format == "epub" {
                 match cover {
