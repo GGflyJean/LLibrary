@@ -120,6 +120,14 @@ impl FileRecord {
     pub fn size_label(&self) -> String {
         human_size(self.size.max(0) as u64)
     }
+
+    pub fn is_epub(&self) -> bool {
+        self.format.eq_ignore_ascii_case("epub")
+    }
+
+    pub fn is_pdf(&self) -> bool {
+        self.format.eq_ignore_ascii_case("pdf")
+    }
 }
 
 impl WorkSummary {

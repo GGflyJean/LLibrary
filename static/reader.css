@@ -1,0 +1,50 @@
+html, body { height: 100%; }
+body.reader-page {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  background: #f6f4ef;
+  color: #23201c;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+}
+.reader-header {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  padding: 0.5rem 0.8rem;
+  background: #fff;
+  border-bottom: 1px solid #e2ddd3;
+  font-size: 0.9rem;
+  flex: 0 0 auto;
+}
+.reader-title {
+  font-weight: 600;
+  max-width: 50vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.reader-actions { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
+.reader-actions a, .reader-actions button {
+  color: #3d5a80;
+  background: none;
+  border: 0;
+  padding: 0.2rem 0.35rem;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: none;
+}
+.reader-actions a:hover, .reader-actions button:hover { text-decoration: underline; }
+#viewer { flex: 1; min-height: 0; }
+.pdf-frame { flex: 1; width: 100%; border: 0; background: #fff; }
+.reader-message {
+  max-width: 32rem;
+  margin: 3rem auto;
+  padding: 1.5rem;
+  background: #fff;
+  border: 1px solid #e2ddd3;
+  border-radius: 0.8rem;
+  text-align: center;
+}

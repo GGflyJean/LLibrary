@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }}</title>
+  <link rel="stylesheet" href="/static/reader.css">
+</head>
+<body class="reader-page" data-back-url="{{ back_url }}">
+  <header class="reader-header">
+    <span class="reader-title">{{ title }}</span>
+    <span class="reader-actions">
+      {% if is_epub %}
+        <button type="button" id="reader-prev">上一页</button>
+        <button type="button" id="reader-next">下一页</button>
+      {% endif %}
+      <a href="{{ download_url }}">下载</a>
+      <a href="{{ back_url }}">返回书库</a>
+      <button type="button" id="reader-close">关闭</button>
+    </span>
+  </header>
+
+  {% if is_epub %}
+  <div id="viewer" data-url="{{ file_url }}" data-file-id="{{ file_id }}"></div>
+  <script src="/static/epubjs/jszip.min.js"></script>
+  <script src="/static/epubjs/epub.min.js"></script>
+  <script>
+    (function () {
+      const viewer = document.getElementById('viewer');
+      const url = viewer.dataset.url;
+      const key = 'llibrary:progress:' + viewer.dataset.fileId;
+      const book = ePub(url);
+      const rendition = book.renderTo(viewer, {
+        width: '100%',
+        height: '100%',
+        flow: 'paginated',
+        spread: 'auto'
+      });
+      const saved = localStorage.getItem(key);
+      rendition.display(saved || undefined);
+      rendition.on('relocated', function (location) {
+        if (location && location.start) {
+          localStorage.setItem(key, location.start.cfi);
+        }
+      });
+      document.getElementById('reader-prev').addEventListener('click', function () {
+        rendition.prev();
+      });
+      document.getElementById('reader-next').addEventListener('click', function () {
+        rendition.next();
+      });
+      document.addEventListener('keydown', function (event) {
+        if (event.key === 'ArrowLeft') rendition.prev();
+        if (event.key === 'ArrowRight') rendition.next();
+      });
+    })();
+  </script>
+  {% endif %}
+
+  {% if is_pdf %}
+  <iframe class="pdf-frame" src="{{ file_url }}" title="{{ title }}"></iframe>
+  {% endif %}
+
+  {% if !supported %}
+  <div class="reader-message">
+    <p>{{ message }}</p>
+    <p><a href="{{ download_url }}">下载文件</a></p>
+  </div>
+  {% endif %}
+
+  <script>
+    (function () {
+      const close = document.getElementById('reader-close');
+      close.addEventListener('click', function () {
+        if (window.parent !== window) {
+          window.parent.postMessage({ type: 'llibrary-close-reader' }, window.location.origin);
+        } else {
+          const back = document.body.dataset.backUrl || '/';
+          if (window.history.length > 1) {
+            window.history.back();
+          } else {
+            window.location.href = back;
+          }
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

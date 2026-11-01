@@ -12,11 +12,26 @@
 - 封面：EPUB 提取、PDF 按需生成、占位图
 - SQLite + FTS5 搜索
 - Web/PWA 浏览、搜索、详情
+- 第一版阅读器：EPUB/PDF 浮层阅读与新标签页；AZW3/MOBI 回退配对 EPUB 或下载
 - OPDS 1.2 导航与 acquisition feed
 - HTTP Range 文件流，支持大 PDF
 - 单用户鉴权（Web 会话 + OPDS Basic）
 
 不在 P1：中图法分类（P2）、网页阅读器（P3）、Send-to-Kindle（P4）、监控与备份加固（P5）。
+
+## 阅读器（第一版）
+
+详情页对 EPUB/PDF 文件提供：
+
+- **浮层阅读**：当前页全屏浮层，关闭后回到详情
+- **新标签页**：直接打开 `/read/{file_id}`，适合长时间阅读
+
+实现方式：
+
+- EPUB：`epub.js` + `JSZip`（已放入 `static/epubjs/`），同源读取 `/files/{id}`，进度暂存 `localStorage`
+- PDF：浏览器原生 PDF 查看器，通过 iframe/新标签页加载 `/files/{id}`，沿用已有 Range 支持
+- AZW3/AZW/MOBI：浏览器无法直接渲染；如果同作品有 EPUB，会自动跳到该 EPUB 阅读页，否则显示下载提示
+- 不处理 DRM；极少数 epub.js 不兼容的 EPUB 仍可下载到本地阅读器
 
 ## 环境变量
 

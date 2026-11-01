@@ -75,6 +75,20 @@ struct DetailTemplate {
 }
 
 #[derive(Template)]
+#[template(path = "reader.html")]
+struct ReaderTemplate {
+    title: String,
+    file_id: i64,
+    file_url: String,
+    download_url: String,
+    back_url: String,
+    is_epub: bool,
+    is_pdf: bool,
+    supported: bool,
+    message: String,
+}
+
+#[derive(Template)]
 #[template(path = "login.html")]
 struct LoginTemplate {
     error: String,
@@ -184,6 +198,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(index))
         .route("/works/{id}", get(detail))
+        .route("/read/{id}", get(read_file))
         .route("/files/{id}", get(file))
         .route("/covers/{file}", get(cover))
         .route("/opds", get(opds_root))
@@ -314,6 +329,73 @@ async fn detail(
         Ok(None) => not_found(),
         Err(error) => internal(error),
     }
+}
+
+async fn read_file(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Response {
+    if let Some(response) = require_web(&state, &headers) {
+        return response;
+    }
+    let db = state.db.clone();
+    let record = match blocking(move || db.get_file(id)).await {
+        Ok(Some(record)) => record,
+        Ok(None) => return not_found(),
+        Err(error) => return internal(error),
+    };
+    if record.missing {
+        return not_found();
+    }
+    let format = record.format.to_ascii_lowercase();
+    let download_url = format!("/files/{}", record.id);
+    let back_url = format!("/works/{}", record.work_id);
+
+    if matches!(format.as_str(), "azw3" | "azw" | "mobi") {
+        let db = state.db.clone();
+        let work_id = record.work_id;
+        let files = match blocking(move || db.list_files(work_id)).await {
+            Ok(files) => files,
+            Err(error) => return internal(error),
+        };
+        if let Some(epub) = files.iter().find(|file| file.is_epub() && !file.missing) {
+            return Redirect::to(&format!("/read/{}", epub.id)).into_response();
+        }
+        return render(ReaderTemplate {
+            title: record.basename.clone(),
+            file_id: record.id,
+            file_url: download_url.clone(),
+            download_url,
+            back_url,
+            is_epub: false,
+            is_pdf: false,
+            supported: false,
+            message: "此格式暂不支持在线阅读；请下载，或使用同一作品的 EPUB。".to_string(),
+        });
+    }
+
+    if !matches!(format.as_str(), "epub" | "pdf") {
+        return not_found();
+    }
+
+    let db = state.db.clone();
+    let work_id = record.work_id;
+    let title = match blocking(move || db.get_work(work_id)).await {
+        Ok(Some(detail)) => detail.work.title,
+        _ => record.basename.clone(),
+    };
+    render(ReaderTemplate {
+        title,
+        file_id: record.id,
+        file_url: format!("/files/{}", record.id),
+        download_url,
+        back_url,
+        is_epub: format == "epub",
+        is_pdf: format == "pdf",
+        supported: true,
+        message: String::new(),
+    })
 }
 
 async fn cover(
@@ -1607,6 +1689,135 @@ mod tests {
         let body = body_text(response).await;
         assert!(body.contains("缺失"));
         assert!(body.contains("重复"));
+    }
+
+    #[tokio::test]
+    async fn reader_page_and_buttons() {
+        let (_dir, state, work, file) = test_state();
+        let app = router(state.clone());
+
+        let response = app
+            .clone()
+            .oneshot(request(&format!("/read/{file}"), false))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+
+        let response = app
+            .clone()
+            .oneshot(request(&format!("/read/{file}"), true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_text(response).await;
+        assert!(body.contains("epub.min.js"));
+        assert!(body.contains(&format!("data-url=\"/files/{file}\"")));
+
+        let response = app
+            .clone()
+            .oneshot(request("/static/epubjs/epub.min.js", false))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = app
+            .clone()
+            .oneshot(request(&format!("/works/{work}"), true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_text(response).await;
+        assert!(body.contains(&format!("data-reader-url=\"/read/{file}\"")));
+        assert!(body.contains("target=\"_blank\""));
+
+        let db = state.db.clone();
+        let source_id = db.list_sources().unwrap()[0].id;
+        let pdf_id = db
+            .upsert_file(&NewFile {
+                work_id: work,
+                source_id,
+                rel_path: "中华书局/论语译注.pdf".to_string(),
+                basename: "论语译注".to_string(),
+                format: "pdf".to_string(),
+                size: 10,
+                mtime: 0,
+                hash: "pdf-reader".to_string(),
+                page_count: 1,
+                error: None,
+            })
+            .unwrap();
+        let response = app
+            .clone()
+            .oneshot(request(&format!("/read/{pdf_id}"), true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_text(response).await;
+        assert!(body.contains("<iframe"));
+        assert!(body.contains(&format!("/files/{pdf_id}")));
+
+        let azw_work = db
+            .insert_work(
+                "azw-only",
+                &BookMetadata {
+                    title: "仅AZW3".to_string(),
+                    authors: "作者".to_string(),
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+        let azw_id = db
+            .upsert_file(&NewFile {
+                work_id: azw_work,
+                source_id,
+                rel_path: "中华书局/仅AZW3.azw3".to_string(),
+                basename: "仅AZW3".to_string(),
+                format: "azw3".to_string(),
+                size: 10,
+                mtime: 0,
+                hash: "azw-only".to_string(),
+                page_count: 0,
+                error: None,
+            })
+            .unwrap();
+        let response = app
+            .clone()
+            .oneshot(request(&format!("/read/{azw_id}"), true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(body_text(response).await.contains("暂不支持在线阅读"));
+
+        let paired_azw = db
+            .upsert_file(&NewFile {
+                work_id: work,
+                source_id,
+                rel_path: "中华书局/论语译注.azw3".to_string(),
+                basename: "论语译注".to_string(),
+                format: "azw3".to_string(),
+                size: 10,
+                mtime: 0,
+                hash: "azw-pair".to_string(),
+                page_count: 0,
+                error: None,
+            })
+            .unwrap();
+        let response = app
+            .clone()
+            .oneshot(request(&format!("/read/{paired_azw}"), true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::LOCATION)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            format!("/read/{file}")
+        );
     }
 
     #[tokio::test]

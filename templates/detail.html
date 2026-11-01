@@ -30,7 +30,17 @@
             {% if file.is_duplicate %} · 重复{% endif %}
             {% if file.error.is_some() %} · 解析错误{% endif %}
           </td>
-          <td>{% if !file.missing %}<a href="/files/{{ file.id }}">打开 / 下载</a>{% endif %}</td>
+          <td class="actions">
+            {% if !file.missing %}
+              {% if file.is_epub() || file.is_pdf() %}
+                <button type="button" class="link" data-reader-url="/read/{{ file.id }}" data-reader-title="{{ work.title }}">浮层阅读</button>
+                <a href="/read/{{ file.id }}" target="_blank" rel="noopener">新标签页</a>
+              {% else %}
+                <span class="muted">在线阅读请使用 EPUB</span>
+              {% endif %}
+              <a href="/files/{{ file.id }}">下载</a>
+            {% endif %}
+          </td>
         </tr>
       {% endfor %}
       </tbody>
