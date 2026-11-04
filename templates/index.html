@@ -5,6 +5,7 @@
       hx-get="/" hx-target="#results" hx-select="#results" hx-push-url="true"
       hx-trigger="submit, keyup changed delay:400ms from:input[name=q]">
   <input type="search" name="q" placeholder="搜索书名、作者、出版社、ISBN" value="{{ query }}">
+  <input type="hidden" name="view" value="{{ view_mode }}">
   <button type="submit">搜索</button>
 </form>
 {% endblock %}
@@ -15,6 +16,7 @@
 <div class="filters">
   <form method="get" action="/" class="filter-form">
     <input type="hidden" name="q" value="{{ query }}">
+    <input type="hidden" name="view" value="{{ view_mode }}">
     <select name="publisher" onchange="this.form.submit()">
       <option value="">全部出版社</option>
       {% for item in publishers %}
@@ -34,27 +36,30 @@
       {% endfor %}
     </select>
   </form>
-  <span class="muted">共 {{ total }} 个作品</span>
   <span class="view-toggle" role="group" aria-label="显示方式">
-    <button type="button" data-view="detail">详情</button>
-    <button type="button" data-view="compact">简洁</button>
+    <a class="{% if !compact %}active{% endif %}" href="?q={{ query }}&publisher={{ publisher }}&format={{ format }}&source={{ source_id }}&view=detail">详情</a>
+    <a class="{% if compact %}active{% endif %}" href="?q={{ query }}&publisher={{ publisher }}&format={{ format }}&source={{ source_id }}&view=compact">简洁</a>
   </span>
 </div>
-<div id="results">
-{% if searching %}
+<div id="results" class="{% if compact %}compact-view{% endif %}">
+  <p class="result-summary">
+    {% if searching %}搜索{% if !query.is_empty() %} “{{ query }}”{% endif %} · {% endif %}
+    共 {{ total }} 个作品
+  </p>
+{% if flat %}
   {% if works.is_empty() %}
     <p class="empty">没有找到作品。</p>
   {% else %}
-    <p class="muted"><a href="/">← 返回分类浏览</a></p>
+    <p class="muted"><a href="?q={{ query }}&publisher={{ publisher }}&format={{ format }}&source={{ source_id }}&view=detail">← 分类浏览</a></p>
     <div class="grid">
     {% for work in works %}
       {% include "_card.html" %}
     {% endfor %}
     </div>
     <div class="pager">
-      {% if prev_page > 0 %}<a href="?q={{ query }}&publisher={{ publisher }}&format={{ format }}&source={{ source_id }}&page={{ prev_page }}">上一页</a>{% endif %}
+      {% if prev_page > 0 %}<a href="?q={{ query }}&publisher={{ publisher }}&format={{ format }}&source={{ source_id }}&view={{ view_mode }}&page={{ prev_page }}">上一页</a>{% endif %}
       <span>第 {{ page }} / {{ total_pages }} 页</span>
-      {% if next_page > 0 %}<a href="?q={{ query }}&publisher={{ publisher }}&format={{ format }}&source={{ source_id }}&page={{ next_page }}">下一页</a>{% endif %}
+      {% if next_page > 0 %}<a href="?q={{ query }}&publisher={{ publisher }}&format={{ format }}&source={{ source_id }}&view={{ view_mode }}&page={{ next_page }}">下一页</a>{% endif %}
     </div>
   {% endif %}
 {% else %}

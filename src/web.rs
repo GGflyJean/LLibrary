@@ -57,6 +57,9 @@ struct IndexTemplate {
     works: Vec<WorkSummary>,
     tree: Vec<ClcTopGroup>,
     searching: bool,
+    compact: bool,
+    flat: bool,
+    view_mode: String,
     total: i64,
     page: i64,
     total_pages: i64,
@@ -218,6 +221,7 @@ struct IndexQuery {
     format: Option<String>,
     source: Option<String>,
     page: Option<String>,
+    view: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -288,18 +292,25 @@ async fn index(
         .as_deref()
         .and_then(|value| value.parse::<i64>().ok())
         .filter(|value| *value > 0);
+    let compact = query.view.as_deref() == Some("compact");
+    let view_mode = if compact {
+        "compact".to_string()
+    } else {
+        "detail".to_string()
+    };
     let filter = WorkFilter {
         query: clean(query.q),
         publisher: clean(query.publisher),
         format: clean(query.format),
         source_id,
     };
+    let flat = filter.query.is_some() || compact;
     let db = state.db.clone();
     let filter_db = filter.clone();
     let result = blocking(move || {
         let publishers = db.publishers()?;
         let sources = db.list_sources()?;
-        if filter_db.query.is_some() {
+        if flat {
             let works = db.list_works(&filter_db, PER_PAGE, (page - 1) * PER_PAGE)?;
             let total = db.count_works(&filter_db)?;
             Ok((true, works, Vec::new(), total, publishers, sources))
@@ -311,7 +322,7 @@ async fn index(
         }
     })
     .await;
-    let (searching, works, tree, total, publishers, sources) = match result {
+    let (flat, works, tree, total, publishers, sources) = match result {
         Ok(value) => value,
         Err(error) => return internal(error),
     };
@@ -323,7 +334,8 @@ async fn index(
             selected: source_id == Some(source.id),
         })
         .collect();
-    let total_pages = if searching {
+    let searching = filter.query.is_some();
+    let total_pages = if flat {
         ((total + PER_PAGE - 1) / PER_PAGE).max(1)
     } else {
         1
@@ -343,6 +355,9 @@ async fn index(
         works,
         tree,
         searching,
+        compact,
+        flat,
+        view_mode,
         total,
         page,
         total_pages,
@@ -1616,7 +1631,7 @@ mod tests {
         let body = body_text(response).await;
         assert!(body.contains("论语译注"));
         assert!(body.contains("中华书局"));
-        assert!(body.contains("data-view=\"compact\""));
+        assert!(body.contains("view=compact"));
 
         let response = app
             .clone()
@@ -1928,13 +1943,6 @@ mod tests {
 
         let response = app
             .clone()
-            .oneshot(request("/static/view.js", false))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-
-        let response = app
-            .clone()
             .oneshot(request("/static/icon-192.png", false))
             .await
             .unwrap();
@@ -1979,7 +1987,21 @@ mod tests {
             .oneshot(request("/?q=论语", true))
             .await
             .unwrap();
-        assert!(body_text(response).await.contains("论语译注"));
+        let body = body_text(response).await;
+        assert!(body.contains("论语译注"));
+        assert!(body.contains("共 1 个作品"));
+
+        let response = app
+            .clone()
+            .oneshot(request("/?view=compact", true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_text(response).await;
+        assert!(body.contains("compact-view"));
+        assert!(body.contains("共 2 个作品"));
+        assert!(body.contains("论语译注"));
+        assert!(!body.contains("clc-level1"));
     }
 
     #[tokio::test]

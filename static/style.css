@@ -246,19 +246,20 @@ details > summary { user-select: none; }
 .classify-editor small { display: block; margin-top: 0.4rem; }
 
 .view-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
-.view-toggle button {
+.view-toggle a, .view-toggle button {
   border: 0;
   border-radius: 0;
   padding: 0.3rem 0.7rem;
   background: var(--surface);
   color: var(--muted);
   font-size: 0.85rem;
+  text-decoration: none;
 }
-.view-toggle button.active { background: var(--accent); color: #fff; }
+.view-toggle a.active, .view-toggle button.active { background: var(--accent); color: #fff; }
 
-html.compact-view .grid { display: block; }
-html.compact-view .clc-level2 .grid { padding: 0.2rem 0.8rem; }
-html.compact-view .card {
+.compact-view .grid { display: block; }
+.compact-view .clc-level2 .grid { padding: 0.2rem 0.8rem; }
+.compact-view .card {
   display: flex;
   align-items: baseline;
   gap: 0.5rem;
@@ -269,9 +270,9 @@ html.compact-view .card {
   background: transparent;
   overflow: hidden;
 }
-html.compact-view .card:hover { transform: none; box-shadow: none; }
-html.compact-view .card img { display: none; }
-html.compact-view .card-body {
+.compact-view .card:hover { transform: none; box-shadow: none; }
+.compact-view .card img { display: none; }
+.compact-view .card-body {
   display: flex;
   align-items: baseline;
   gap: 0.5rem;
@@ -279,7 +280,7 @@ html.compact-view .card-body {
   min-width: 0;
   padding: 0;
 }
-html.compact-view .card h3 {
+.compact-view .card h3 {
   flex: 1 1 auto;
   min-width: 0;
   margin: 0;
@@ -288,8 +289,8 @@ html.compact-view .card h3 {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-html.compact-view .card .authors,
-html.compact-view .card .meta {
+.compact-view .card .authors,
+.compact-view .card .meta {
   flex: 0 1 auto;
   min-width: 0;
   max-width: 30%;
@@ -299,4 +300,6 @@ html.compact-view .card .meta {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-html.compact-view .card .badges { display: none; }
+.compact-view .card .badges { display: none; }
+
+.result-summary { margin: 0.5rem 0 0.8rem; color: var(--muted); font-size: 0.9rem; }
