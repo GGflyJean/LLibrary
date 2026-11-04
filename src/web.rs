@@ -75,6 +75,8 @@ struct DetailTemplate {
     work: WorkSummary,
     files: Vec<FileRecord>,
     cover_url: String,
+    clc_groups: Vec<ClcGroup>,
+    clc_unclassified_selected: bool,
 }
 
 #[derive(Template)]
@@ -138,6 +140,19 @@ impl ScansTemplate {
             .map(|progress| progress.total)
             .unwrap_or(0)
     }
+}
+
+#[derive(Debug, Clone)]
+struct ClcOption {
+    code: String,
+    label: String,
+    selected: bool,
+}
+
+#[derive(Debug, Clone)]
+struct ClcGroup {
+    label: String,
+    options: Vec<ClcOption>,
 }
 
 #[derive(Debug, Clone)]
@@ -217,11 +232,17 @@ struct LoginForm {
     next: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ClassifyForm {
+    clc_code: String,
+}
+
 pub fn router(state: AppState) -> Router {
     let static_dir = state.static_dir.clone();
     Router::new()
         .route("/", get(index))
         .route("/works/{id}", get(detail))
+        .route("/works/{id}/classify", post(classify_work))
         .route("/read/{id}", get(read_file))
         .route("/files/{id}", get(file))
         .route("/files/{id}/book.epub", get(file))
@@ -365,15 +386,69 @@ async fn detail(
     match result {
         Ok(Some(detail)) => {
             let cover_url = detail.work.cover_url().to_string();
+            let clc_unclassified_selected = detail.work.clc_is_unclassified();
+            let clc_groups = build_clc_options(&detail.work.clc_code);
             render(DetailTemplate {
                 work: detail.work,
                 files: detail.files,
                 cover_url,
+                clc_groups,
+                clc_unclassified_selected,
             })
         }
         Ok(None) => not_found(),
         Err(error) => internal(error),
     }
+}
+
+async fn classify_work(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Form(form): Form<ClassifyForm>,
+) -> Response {
+    if let Some(response) = require_web(&state, &headers) {
+        return response;
+    }
+    let code = form.clc_code.trim().to_string();
+    let (code, label) = if code.is_empty() || code == crate::clc::UNCLASSIFIED_CODE {
+        (
+            crate::clc::UNCLASSIFIED_CODE.to_string(),
+            "未分类".to_string(),
+        )
+    } else {
+        match crate::clc::level2_label(&code) {
+            Some(label) => (code, label.to_string()),
+            None => return (StatusCode::BAD_REQUEST, "未知分类号").into_response(),
+        }
+    };
+    let db = state.db.clone();
+    match blocking(move || db.set_work_clc_manual(id, &code, &label)).await {
+        Ok(_) => Redirect::to(&format!("/works/{id}#classification")).into_response(),
+        Err(error) => internal(error),
+    }
+}
+
+fn build_clc_options(current: &str) -> Vec<ClcGroup> {
+    let mut groups = Vec::new();
+    for level in crate::clc::LEVEL1 {
+        let options: Vec<ClcOption> = crate::clc::CATEGORIES
+            .iter()
+            .filter(|category| category.code.starts_with(level.code))
+            .map(|category| ClcOption {
+                code: category.code.to_string(),
+                label: category.label.to_string(),
+                selected: category.code == current,
+            })
+            .collect();
+        if !options.is_empty() {
+            groups.push(ClcGroup {
+                label: format!("{} {}", level.code, level.label),
+                options,
+            });
+        }
+    }
+    groups
 }
 
 async fn text_file(
@@ -949,7 +1024,7 @@ async fn sources_page(
     let notice = if query.added.is_some() {
         "来源已添加".to_string()
     } else if let Some(count) = query.reclassified {
-        format!("已重新分类 {count} 个作品")
+        format!("已重新分类 {count} 个作品（手工分类已保留）")
     } else {
         String::new()
     };
@@ -1541,6 +1616,7 @@ mod tests {
         let body = body_text(response).await;
         assert!(body.contains("论语译注"));
         assert!(body.contains("中华书局"));
+        assert!(body.contains("data-view=\"compact\""));
 
         let response = app
             .clone()
@@ -1849,6 +1925,13 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         assert!(body_text(response).await.contains("addEventListener"));
+
+        let response = app
+            .clone()
+            .oneshot(request("/static/view.js", false))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
 
         let response = app
             .clone()
@@ -2164,6 +2247,56 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         assert!(body_text(response).await.contains("中文编码测试"));
+    }
+
+    #[tokio::test]
+    async fn manual_classification_is_preserved() {
+        let (_dir, state, work, _file) = test_state();
+        let app = router(state.clone());
+
+        let response = app
+            .clone()
+            .oneshot(request(&format!("/works/{work}"), true))
+            .await
+            .unwrap();
+        let body = body_text(response).await;
+        assert!(body.contains(&format!("/works/{work}/classify")));
+        assert!(body.contains("name=\"clc_code\""));
+
+        let form = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("clc_code", "K2")
+            .finish();
+        let response = app
+            .clone()
+            .oneshot(post_form(&format!("/works/{work}/classify"), &form, true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+
+        let response = app
+            .clone()
+            .oneshot(request(&format!("/works/{work}"), true))
+            .await
+            .unwrap();
+        let body = body_text(response).await;
+        assert!(body.contains("中国史"));
+        assert!(body.contains("手工"));
+
+        let response = app
+            .clone()
+            .oneshot(post_form("/reclassify", "", true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+
+        let response = app
+            .clone()
+            .oneshot(request(&format!("/works/{work}"), true))
+            .await
+            .unwrap();
+        let body = body_text(response).await;
+        assert!(body.contains("中国史"));
+        assert!(body.contains("手工"));
     }
 
     #[tokio::test]

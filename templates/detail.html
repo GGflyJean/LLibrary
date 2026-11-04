@@ -8,10 +8,32 @@
     <h1>{{ work.title }}</h1>
     <p class="authors">{{ work.authors_label() }}</p>
     <dl>
-      <dt>出版社</dt><dd>{{ work.publisher }}</dd>
+      <dt>出版社</dt><dd>{{ work.publisher_label() }}</dd>
       <dt>ISBN</dt><dd>{{ work.isbn }}</dd>
       <dt>语言</dt><dd>{{ work.language }}</dd>
       <dt>出版日期</dt><dd>{{ work.pub_date }}</dd>
+      <dt>中图法</dt>
+      <dd>
+        {{ work.clc_display() }}
+        {% if work.clc_manual %}<span class="badge-manual">手工</span>{% endif %}
+        <details class="classify-editor" id="classification">
+          <summary>调整分类</summary>
+          <form method="post" action="/works/{{ work.id }}/classify">
+            <select name="clc_code">
+              <option value="-" {% if clc_unclassified_selected %}selected{% endif %}>未分类</option>
+              {% for group in clc_groups %}
+              <optgroup label="{{ group.label }}">
+                {% for option in group.options %}
+                <option value="{{ option.code }}" {% if option.selected %}selected{% endif %}>{{ option.code }} {{ option.label }}</option>
+                {% endfor %}
+              </optgroup>
+              {% endfor %}
+            </select>
+            <button type="submit">保存分类</button>
+          </form>
+          <small class="muted">手工分类不会被自动分类或“重新分类全部作品”覆盖。</small>
+        </details>
+      </dd>
     </dl>
     {% if !work.description.is_empty() %}
     <p class="description">{{ work.description }}</p>

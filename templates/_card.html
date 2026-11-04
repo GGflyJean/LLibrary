@@ -3,7 +3,7 @@
   <div class="card-body">
     <h3>{{ work.title }}</h3>
     <p class="authors">{{ work.authors_label() }}</p>
-    <p class="meta">{{ work.publisher }}</p>
+    <p class="meta">{{ work.publisher_label() }}</p>
     <p class="badges">{{ work.formats_label() }}{% if work.all_missing %} · 缺失{% endif %}{% if work.has_duplicate %} · 重复{% endif %}</p>
   </div>
 </a>

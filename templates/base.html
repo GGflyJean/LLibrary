@@ -7,8 +7,18 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" href="/static/icon-192.png">
   <link rel="stylesheet" href="/static/style.css">
+  <script>
+    (function () {
+      try {
+        var value = localStorage.getItem('llibrary:view');
+        var compact = value ? value === 'compact' : window.matchMedia('(max-width: 720px)').matches;
+        if (compact) document.documentElement.classList.add('compact-view');
+      } catch (error) { /* ignore */ }
+    })();
+  </script>
   <script src="/static/htmx.min.js" defer></script>
   <script src="/static/reader.js" defer></script>
+  <script src="/static/view.js" defer></script>
 </head>
 <body>
   <header class="topbar">

@@ -229,3 +229,74 @@ td.actions a, td.actions button { margin-right: 0.5rem; }
   font-weight: 700;
 }
 details > summary { user-select: none; }
+
+.badge-manual {
+  display: inline-block;
+  margin-left: 0.35rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.75rem;
+}
+.classify-editor { margin-top: 0.5rem; }
+.classify-editor summary { cursor: pointer; color: var(--accent); font-size: 0.9rem; }
+.classify-editor form { display: flex; gap: 0.5rem; align-items: center; margin-top: 0.5rem; flex-wrap: wrap; }
+.classify-editor select { max-width: 100%; }
+.classify-editor small { display: block; margin-top: 0.4rem; }
+
+.view-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+.view-toggle button {
+  border: 0;
+  border-radius: 0;
+  padding: 0.3rem 0.7rem;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.view-toggle button.active { background: var(--accent); color: #fff; }
+
+html.compact-view .grid { display: block; }
+html.compact-view .clc-level2 .grid { padding: 0.2rem 0.8rem; }
+html.compact-view .card {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.5rem 0.25rem;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  overflow: hidden;
+}
+html.compact-view .card:hover { transform: none; box-shadow: none; }
+html.compact-view .card img { display: none; }
+html.compact-view .card-body {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+}
+html.compact-view .card h3 {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 0.92rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+html.compact-view .card .authors,
+html.compact-view .card .meta {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 30%;
+  margin: 0;
+  font-size: 0.8rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+html.compact-view .card .badges { display: none; }

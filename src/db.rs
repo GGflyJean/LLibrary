@@ -107,6 +107,7 @@ impl Db {
                 pub_date TEXT NOT NULL DEFAULT '',
                 clc_code TEXT NOT NULL DEFAULT '',
                 clc_label TEXT NOT NULL DEFAULT '',
+                clc_manual INTEGER NOT NULL DEFAULT 0,
                 cover_path TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
@@ -176,6 +177,24 @@ impl Db {
         if !has_read_only {
             conn.execute(
                 "ALTER TABLE sources ADD COLUMN read_only INTEGER NOT NULL DEFAULT 1",
+                [],
+            )?;
+        }
+
+        let mut has_clc_manual = false;
+        {
+            let mut stmt = conn.prepare("PRAGMA table_info(works)")?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            for name in rows {
+                if name? == "clc_manual" {
+                    has_clc_manual = true;
+                    break;
+                }
+            }
+        }
+        if !has_clc_manual {
+            conn.execute(
+                "ALTER TABLE works ADD COLUMN clc_manual INTEGER NOT NULL DEFAULT 0",
                 [],
             )?;
         }
@@ -565,7 +584,7 @@ impl Db {
         let (where_sql, values) = build_work_where(filter);
         let sql = format!(
             "SELECT w.id, w.title, w.authors, w.publisher, w.isbn, w.description, w.language,
-                    w.pub_date, w.clc_code, w.clc_label, w.cover_path,
+                    w.pub_date, w.clc_code, w.clc_label, w.clc_manual, w.cover_path,
                     (SELECT GROUP_CONCAT(DISTINCT f.format) FROM files f WHERE f.work_id = w.id AND f.missing = 0),
                     (SELECT COUNT(*) FROM files f WHERE f.work_id = w.id),
                     (SELECT COUNT(*) FROM files f WHERE f.work_id = w.id AND f.missing = 0),
@@ -600,7 +619,7 @@ impl Db {
         let work = conn
             .query_row(
                 "SELECT w.id, w.title, w.authors, w.publisher, w.isbn, w.description, w.language,
-                        w.pub_date, w.clc_code, w.clc_label, w.cover_path,
+                        w.pub_date, w.clc_code, w.clc_label, w.clc_manual, w.cover_path,
                         (SELECT GROUP_CONCAT(DISTINCT f.format) FROM files f WHERE f.work_id = w.id AND f.missing = 0),
                         (SELECT COUNT(*) FROM files f WHERE f.work_id = w.id),
                         (SELECT COUNT(*) FROM files f WHERE f.work_id = w.id AND f.missing = 0),
@@ -646,7 +665,7 @@ impl Db {
         };
         let sql = format!(
             "SELECT w.id, w.title, w.authors, w.publisher, w.isbn, w.description, w.language,
-                    w.pub_date, w.clc_code, w.clc_label, w.cover_path,
+                    w.pub_date, w.clc_code, w.clc_label, w.clc_manual, w.cover_path,
                     (SELECT GROUP_CONCAT(DISTINCT f.format) FROM files f WHERE f.work_id = w.id AND f.missing = 0),
                     (SELECT COUNT(*) FROM files f WHERE f.work_id = w.id),
                     (SELECT COUNT(*) FROM files f WHERE f.work_id = w.id AND f.missing = 0),
@@ -668,7 +687,7 @@ impl Db {
     pub fn reset_clc(&self) -> Result<usize> {
         let conn = self.connection()?;
         let changed = conn.execute(
-            "UPDATE works SET clc_code = '', clc_label = '', updated_at = ?1",
+            "UPDATE works SET clc_code = '', clc_label = '', updated_at = ?1 WHERE clc_manual = 0",
             params![now()],
         )?;
         Ok(changed)
@@ -690,6 +709,15 @@ impl Db {
             }
         }
         tx.commit()?;
+        Ok(())
+    }
+
+    pub fn set_work_clc_manual(&self, id: i64, code: &str, label: &str) -> Result<()> {
+        let conn = self.connection()?;
+        conn.execute(
+            "UPDATE works SET clc_code = ?1, clc_label = ?2, clc_manual = 1, updated_at = ?3 WHERE id = ?4",
+            params![code, label, now(), id],
+        )?;
         Ok(())
     }
 
@@ -739,7 +767,7 @@ impl Db {
         let (where_sql, values) = build_work_where(filter);
         let sql = format!(
             "SELECT w.id, w.title, w.authors, w.publisher, w.isbn, w.description, w.language,
-                    w.pub_date, w.clc_code, w.clc_label, w.cover_path,
+                    w.pub_date, w.clc_code, w.clc_label, w.clc_manual, w.cover_path,
                     (SELECT GROUP_CONCAT(DISTINCT f.format) FROM files f WHERE f.work_id = w.id AND f.missing = 0),
                     (SELECT COUNT(*) FROM files f WHERE f.work_id = w.id),
                     (SELECT COUNT(*) FROM files f WHERE f.work_id = w.id AND f.missing = 0),
@@ -824,10 +852,10 @@ fn file_from_row(row: &Row<'_>) -> rusqlite::Result<FileRecord> {
 }
 
 fn work_from_row(row: &Row<'_>) -> rusqlite::Result<WorkSummary> {
-    let formats_raw: Option<String> = row.get(11)?;
-    let total: i64 = row.get(12)?;
-    let available: i64 = row.get(13)?;
-    let duplicate: Option<i64> = row.get(14)?;
+    let formats_raw: Option<String> = row.get(12)?;
+    let total: i64 = row.get(13)?;
+    let available: i64 = row.get(14)?;
+    let duplicate: Option<i64> = row.get(15)?;
     let formats = formats_raw
         .unwrap_or_default()
         .split(',')
@@ -845,7 +873,8 @@ fn work_from_row(row: &Row<'_>) -> rusqlite::Result<WorkSummary> {
         pub_date: row.get(7)?,
         clc_code: row.get(8)?,
         clc_label: row.get(9)?,
-        cover_path: row.get(10)?,
+        clc_manual: row.get::<_, i64>(10)? != 0,
+        cover_path: row.get(11)?,
         formats,
         all_missing: total > 0 && available == 0,
         has_duplicate: duplicate.unwrap_or(0) > 0,
@@ -1108,6 +1137,19 @@ mod tests {
         assert_eq!(detail.work.clc_code, "B2");
         assert_eq!(detail.work.clc_label, "中国哲学");
         assert!(db.unclassified_works(10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn manual_clc_survives_reset() {
+        let (_dir, db) = temp_db();
+        let work = db
+            .insert_work("manual-clc", &metadata("书名", "作者", ""), None)
+            .unwrap();
+        db.set_work_clc_manual(work, "K2", "中国史").unwrap();
+        db.reset_clc().unwrap();
+        let detail = db.get_work(work).unwrap().unwrap();
+        assert_eq!(detail.work.clc_code, "K2");
+        assert!(detail.work.clc_manual);
     }
 
     #[test]

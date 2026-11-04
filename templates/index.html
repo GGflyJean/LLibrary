@@ -35,6 +35,10 @@
     </select>
   </form>
   <span class="muted">共 {{ total }} 个作品</span>
+  <span class="view-toggle" role="group" aria-label="显示方式">
+    <button type="button" data-view="detail">详情</button>
+    <button type="button" data-view="compact">简洁</button>
+  </span>
 </div>
 <div id="results">
 {% if searching %}

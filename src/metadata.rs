@@ -61,10 +61,12 @@ pub fn extract(format: &str, bytes: &[u8], rel_path: &str) -> Result<Extracted> 
             } else {
                 fallback.title.clone()
             };
-            let authors = if fallback.author.trim().is_empty() {
-                info.authors
-            } else {
+            let authors = if !fallback.author.trim().is_empty() {
                 fallback.author.clone()
+            } else if is_generic_pdf_author(&info.authors) {
+                String::new()
+            } else {
+                info.authors
             };
             Ok(Extracted {
                 metadata: BookMetadata {
@@ -362,6 +364,15 @@ fn resolve_zip_path(base: &str, href: &str) -> String {
         }
     }
     parts.join("/")
+}
+
+fn is_generic_pdf_author(value: &str) -> bool {
+    let lower = value.to_lowercase();
+    lower.is_empty()
+        || lower == "home"
+        || lower.contains("china-pub")
+        || lower.contains("http")
+        || lower.contains("www.")
 }
 
 pub fn parse_pdf(bytes: &[u8]) -> Result<PdfInfo> {

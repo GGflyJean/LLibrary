@@ -91,6 +91,7 @@ pub struct WorkSummary {
     pub pub_date: String,
     pub clc_code: String,
     pub clc_label: String,
+    pub clc_manual: bool,
     pub cover_path: Option<String>,
     pub formats: Vec<String>,
     pub all_missing: bool,
@@ -137,6 +138,20 @@ impl FileRecord {
 }
 
 impl WorkSummary {
+    pub fn clc_is_unclassified(&self) -> bool {
+        self.clc_code.is_empty() || self.clc_code == crate::clc::UNCLASSIFIED_CODE
+    }
+
+    pub fn clc_display(&self) -> String {
+        if self.clc_is_unclassified() {
+            "未分类".to_string()
+        } else if self.clc_label.is_empty() {
+            self.clc_code.clone()
+        } else {
+            format!("{} {}", self.clc_code, self.clc_label)
+        }
+    }
+
     pub fn cover_url(&self) -> &str {
         self.cover_path
             .as_deref()
@@ -156,6 +171,14 @@ impl WorkSummary {
             "未知作者"
         } else {
             &self.authors
+        }
+    }
+
+    pub fn publisher_label(&self) -> &str {
+        if self.publisher.trim().is_empty() {
+            "未知出版社"
+        } else {
+            &self.publisher
         }
     }
 }
