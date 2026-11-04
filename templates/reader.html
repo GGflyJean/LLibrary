@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ title }}</title>
-  <link rel="stylesheet" href="/static/reader.css">
+  <link rel="stylesheet" href="/static/reader.css?v=7">
 </head>
 <body class="reader-page" data-back-url="{{ back_url }}">
   <header class="reader-header">
@@ -209,14 +209,14 @@
     <div id="pdf-status" class="pdf-status">正在加载 PDF…</div>
   </div>
   <script src="/static/pdfjs/pdf.min.js"></script>
-  <script src="/static/reader-pdf.js"></script>
+  <script src="/static/reader-pdf.js?v=7"></script>
   {% endif %}
 
   {% if is_txt %}
   <div id="txt-reader" class="txt-reader" data-url="{{ text_url }}">
     <div id="txt-viewport" class="txt-viewport"><div id="txt-content" class="txt-content"></div></div>
   </div>
-  <script src="/static/reader-txt.js"></script>
+  <script src="/static/reader-txt.js?v=7"></script>
   {% endif %}
 
   {% if !supported %}

@@ -257,13 +257,13 @@ details > summary { user-select: none; }
 }
 .view-toggle a.active, .view-toggle button.active { background: var(--accent); color: #fff; }
 
-.compact-view .grid { display: block; }
+.compact-view .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr)); column-gap: 2rem; }
 .compact-view .clc-level2 .grid { padding: 0.2rem 0.8rem; }
 .compact-view .card {
   display: flex;
   align-items: baseline;
   gap: 0.5rem;
-  padding: 0.5rem 0.25rem;
+  padding: 0.5rem 0.75rem;
   border: 0;
   border-bottom: 1px solid var(--line);
   border-radius: 0;
