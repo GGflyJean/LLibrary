@@ -32,7 +32,7 @@
           </td>
           <td class="actions">
             {% if !file.missing %}
-              {% if file.is_epub() || file.is_pdf() %}
+              {% if file.is_epub() || file.is_pdf() || file.is_txt() %}
                 <button type="button" class="link" data-reader-url="/read/{{ file.id }}" data-reader-title="{{ work.title }}">浮层阅读</button>
                 <a href="/read/{{ file.id }}" target="_blank" rel="noopener">新标签页</a>
               {% else %}

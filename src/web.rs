@@ -2132,6 +2132,15 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         assert!(body_text(response).await.contains("这是一个测试文本"));
 
+        let response = app
+            .clone()
+            .oneshot(request(&format!("/works/{work}"), true))
+            .await
+            .unwrap();
+        assert!(body_text(response)
+            .await
+            .contains(&format!("data-reader-url=\"/read/{txt_id}\"")));
+
         let (gbk, _, _) = encoding_rs::GBK.encode("中文编码测试");
         std::fs::write(dir.path().join("library/中华书局/GBK.txt"), gbk.as_ref()).unwrap();
         let gbk_id = db
