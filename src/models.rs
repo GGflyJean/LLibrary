@@ -130,6 +130,10 @@ impl FileRecord {
     pub fn is_pdf(&self) -> bool {
         self.format.eq_ignore_ascii_case("pdf")
     }
+
+    pub fn is_txt(&self) -> bool {
+        self.format.eq_ignore_ascii_case("txt")
+    }
 }
 
 impl WorkSummary {
@@ -187,6 +191,7 @@ pub fn mime_for_format(format: &str) -> &'static str {
         "pdf" => "application/pdf",
         "mobi" => "application/x-mobipocket-ebook",
         "azw" | "azw3" => "application/vnd.amazon.ebook",
+        "txt" => "text/plain; charset=utf-8",
         _ => "application/octet-stream",
     }
 }

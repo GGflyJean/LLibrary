@@ -87,6 +87,9 @@ struct ReaderTemplate {
     back_url: String,
     is_epub: bool,
     is_pdf: bool,
+    is_txt: bool,
+    text_url: String,
+    has_toc: bool,
     supported: bool,
     page_count: i64,
     message: String,
@@ -223,6 +226,7 @@ pub fn router(state: AppState) -> Router {
         .route("/files/{id}", get(file))
         .route("/files/{id}/book.epub", get(file))
         .route("/files/{id}/book.pdf", get(file))
+        .route("/text/{id}", get(text_file))
         .route("/covers/{file}", get(cover))
         .route("/opds", get(opds_root))
         .route("/opds/all", get(opds_all))
@@ -309,7 +313,7 @@ async fn index(
         publisher: filter.publisher.clone().unwrap_or_default(),
         format: filter.format.clone().unwrap_or_default(),
         publishers,
-        formats: ["epub", "azw3", "pdf", "mobi", "azw"]
+        formats: ["epub", "azw3", "pdf", "mobi", "azw", "txt"]
             .into_iter()
             .map(str::to_string)
             .collect(),
@@ -372,6 +376,58 @@ async fn detail(
     }
 }
 
+async fn text_file(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Response {
+    if let Some(response) = require_api(&state, &headers) {
+        return response;
+    }
+    let db = state.db.clone();
+    let record = match blocking(move || db.get_file(id)).await {
+        Ok(Some(record)) => record,
+        Ok(None) => return not_found(),
+        Err(error) => return internal(error),
+    };
+    if !record.format.eq_ignore_ascii_case("txt") {
+        return not_found();
+    }
+    let db = state.db.clone();
+    let source_id = record.source_id;
+    let secret = state.config.secret.clone();
+    let config = match blocking(move || load_source_config(&db, secret.as_deref(), source_id)).await
+    {
+        Ok(config) => config,
+        Err(error) => return internal(error),
+    };
+    let backend = match SourceBackend::build(&config) {
+        Ok(backend) => backend,
+        Err(error) => return internal(error),
+    };
+    let bytes = match backend.read(&record.rel_path).await {
+        Ok(bytes) => bytes,
+        Err(error) => return internal(error),
+    };
+    let (decoded, _, had_errors) = encoding_rs::UTF_8.decode(&bytes);
+    let text = if had_errors {
+        encoding_rs::GB18030.decode(&bytes).0.into_owned()
+    } else {
+        decoded.into_owned()
+    };
+    let text = text.trim_start_matches('\u{feff}').to_string();
+    let mut response = Response::new(Body::from(text));
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/plain; charset=utf-8"),
+    );
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=3600"),
+    );
+    response
+}
+
 async fn read_file(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -393,6 +449,30 @@ async fn read_file(
     let download_url = format!("/files/{}", record.id);
     let back_url = format!("/works/{}", record.work_id);
 
+    if format == "txt" {
+        let db = state.db.clone();
+        let work_id = record.work_id;
+        let title = match blocking(move || db.get_work(work_id)).await {
+            Ok(Some(detail)) => detail.work.title,
+            _ => record.basename.clone(),
+        };
+        return render(ReaderTemplate {
+            title,
+            file_id: record.id,
+            file_url: download_url.clone(),
+            download_url,
+            back_url,
+            is_epub: false,
+            is_pdf: false,
+            is_txt: true,
+            text_url: format!("/text/{}", record.id),
+            has_toc: false,
+            supported: true,
+            page_count: 0,
+            message: String::new(),
+        });
+    }
+
     if matches!(format.as_str(), "azw3" | "azw" | "mobi") {
         let db = state.db.clone();
         let work_id = record.work_id;
@@ -411,6 +491,9 @@ async fn read_file(
             back_url,
             is_epub: false,
             is_pdf: false,
+            is_txt: false,
+            text_url: String::new(),
+            has_toc: false,
             supported: false,
             page_count: 0,
             message: "此格式暂不支持在线阅读；请下载，或使用同一作品的 EPUB。".to_string(),
@@ -440,6 +523,9 @@ async fn read_file(
         back_url,
         is_epub: format == "epub",
         is_pdf: format == "pdf",
+        is_txt: false,
+        text_url: String::new(),
+        has_toc: format == "epub" || format == "pdf",
         supported: true,
         page_count: record.page_count.max(1),
         message: String::new(),
@@ -1866,7 +1952,7 @@ mod tests {
 
     #[tokio::test]
     async fn reader_page_and_buttons() {
-        let (_dir, state, work, file) = test_state();
+        let (dir, state, work, file) = test_state();
         let app = router(state.clone());
 
         let response = app
@@ -1896,6 +1982,14 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+
+        for asset in [
+            "/static/pdfjs/pdf.min.js",
+            "/static/pdfjs/pdf.worker.min.js",
+        ] {
+            let response = app.clone().oneshot(request(asset, false)).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        }
 
         let response = app
             .clone()
@@ -1930,8 +2024,9 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         let body = body_text(response).await;
-        assert!(body.contains("<iframe"));
-        assert!(body.contains(&format!("/files/{pdf_id}/book.pdf")));
+        assert!(body.contains("pdf-reader"));
+        assert!(body.contains("reader-pdf.js"));
+        assert!(body.contains(&format!("data-url=\"/files/{pdf_id}/book.pdf\"")));
         assert!(body.contains("pdf-page"));
         assert!(body.contains("pdf-jump"));
 
@@ -1997,6 +2092,69 @@ mod tests {
                 .unwrap(),
             format!("/read/{file}")
         );
+
+        let txt_content = "这是一个测试文本。\n第二行。";
+        std::fs::write(
+            dir.path().join("library/中华书局/说明.txt"),
+            txt_content.as_bytes(),
+        )
+        .unwrap();
+        let txt_id = db
+            .upsert_file(&NewFile {
+                work_id: work,
+                source_id,
+                rel_path: "中华书局/说明.txt".to_string(),
+                basename: "说明".to_string(),
+                format: "txt".to_string(),
+                size: txt_content.len() as i64,
+                mtime: 0,
+                hash: "txt-reader".to_string(),
+                page_count: 0,
+                error: None,
+            })
+            .unwrap();
+        let response = app
+            .clone()
+            .oneshot(request(&format!("/read/{txt_id}"), true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_text(response).await;
+        assert!(body.contains("txt-reader"));
+        assert!(body.contains("reader-txt.js"));
+        assert!(body.contains(&format!("data-url=\"/text/{txt_id}\"")));
+
+        let response = app
+            .clone()
+            .oneshot(request(&format!("/text/{txt_id}"), true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(body_text(response).await.contains("这是一个测试文本"));
+
+        let (gbk, _, _) = encoding_rs::GBK.encode("中文编码测试");
+        std::fs::write(dir.path().join("library/中华书局/GBK.txt"), gbk.as_ref()).unwrap();
+        let gbk_id = db
+            .upsert_file(&NewFile {
+                work_id: work,
+                source_id,
+                rel_path: "中华书局/GBK.txt".to_string(),
+                basename: "GBK".to_string(),
+                format: "txt".to_string(),
+                size: gbk.len() as i64,
+                mtime: 0,
+                hash: "txt-gbk".to_string(),
+                page_count: 0,
+                error: None,
+            })
+            .unwrap();
+        let response = app
+            .clone()
+            .oneshot(request(&format!("/text/{gbk_id}"), true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(body_text(response).await.contains("中文编码测试"));
     }
 
     #[tokio::test]

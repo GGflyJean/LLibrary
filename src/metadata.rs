@@ -39,7 +39,7 @@ pub fn extension_of(rel_path: &str) -> String {
 pub fn is_supported(rel_path: &str) -> bool {
     matches!(
         extension_of(rel_path).as_str(),
-        "epub" | "azw3" | "azw" | "mobi" | "pdf"
+        "epub" | "azw3" | "azw" | "mobi" | "pdf" | "txt"
     )
 }
 
@@ -56,11 +56,21 @@ pub fn extract(format: &str, bytes: &[u8], rel_path: &str) -> Result<Extracted> 
         "pdf" => {
             let info = parse_pdf(bytes)?;
             let fallback = parse_filename(rel_path);
+            let title = if fallback.title.trim().is_empty() {
+                info.title
+            } else {
+                fallback.title.clone()
+            };
+            let authors = if fallback.author.trim().is_empty() {
+                info.authors
+            } else {
+                fallback.author.clone()
+            };
             Ok(Extracted {
                 metadata: BookMetadata {
-                    title: info.title,
-                    authors: info.authors,
-                    ..fallback_metadata(&fallback)
+                    title,
+                    authors,
+                    ..Default::default()
                 },
                 cover: None,
                 page_count: info.page_count,
@@ -672,6 +682,11 @@ mod tests {
             "Pages" => pages_id,
         });
         document.trailer.set("Root", catalog_id);
+        let info_id = document.add_object(dictionary! {
+            "Title" => lopdf::Object::string_literal("ebook67-1"),
+            "Author" => lopdf::Object::string_literal("China-pub.com"),
+        });
+        document.trailer.set("Info", info_id);
         let mut output = Vec::new();
         document.save_to(&mut output).unwrap();
         output
@@ -699,6 +714,14 @@ mod tests {
     #[test]
     fn corrupt_pdf_fails() {
         assert!(parse_pdf(b"not a pdf").is_err());
+    }
+
+    #[test]
+    fn pdf_uses_filename_when_metadata_is_generic() {
+        let extracted = extract("pdf", &make_pdf(), "TCP-IP详解卷1协议.pdf").expect("pdf");
+        assert_eq!(extracted.metadata.title, "TCP-IP详解卷1协议");
+        assert_eq!(extracted.page_count, 1);
+        assert!(is_supported("说明.txt"));
     }
 
     #[test]

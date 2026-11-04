@@ -12,7 +12,7 @@
 - 封面：EPUB 提取、PDF 按需生成、占位图
 - SQLite + FTS5 搜索
 - Web/PWA 浏览、搜索、详情
-- 第一版阅读器：EPUB/PDF 浮层阅读与新标签页；AZW3/MOBI 回退配对 EPUB 或下载
+- 第一版阅读器：EPUB/PDF/TXT 浮层阅读与新标签页；AZW3/MOBI 回退配对 EPUB 或下载
 - 中图法一级+二级虚拟分类与首页分类折叠树
 - OPDS 1.2 导航与 acquisition feed
 - HTTP Range 文件流，支持大 PDF
@@ -31,7 +31,7 @@
 
 ## 阅读器（第一版）
 
-详情页对 EPUB/PDF 文件提供：
+详情页对 EPUB/PDF/TXT 文件提供：
 
 - **浮层阅读**：覆盖整个视口的浮层，右上角关闭按钮；关闭后回到详情
 - **新标签页**：直接打开 `/read/{file_id}`，适合长时间阅读
@@ -42,9 +42,10 @@
 - EPUB：`epub.js` + `JSZip`（已放入 `static/epubjs/`），同源读取 `/files/{id}`，进度暂存 `localStorage`
   - 目录：读取 EPUB 自带目录，点击章节跳转
   - 跳转：输入 0-100 的阅读百分比跳转
-- PDF：浏览器原生 PDF 查看器，通过 iframe/新标签页加载 `/files/{id}`，沿用已有 Range 支持
-  - 页码：阅读器工具栏提供页码跳转
-  - 目录/缩放：使用 PDF 查看器自带的目录/书签与缩放工具栏
+- PDF：内置 PDF.js Canvas 阅读器，不依赖浏览器原生 PDF 查看器
+  - 页码：页码输入、上一页/下一页、目录抽屉、缩放/适宽
+  - 移动端同样使用 Canvas 渲染，避免 iframe PDF 白屏
+- TXT：服务端自动识别 UTF-8/GB18030 并转为 UTF-8；阅读器按视口分页，支持上一页/下一页、页码跳转和字号缩放，不提供编辑
 - EPUB 缩放：`A− / A+` 调整字号（60%-220%），按设备保存在 localStorage
 - AZW3/AZW/MOBI：浏览器无法直接渲染；如果同作品有 EPUB，会自动跳到该 EPUB 阅读页，否则显示下载提示
 - 不处理 DRM；极少数 epub.js 不兼容的 EPUB 仍可下载到本地阅读器
@@ -181,6 +182,6 @@ static/         CSS、PWA manifest、service worker、htmx
 ## Roadmap
 
 - P2 后续：LLM 批量分类与人工复核（首版规则分类已可用）
-- P3 后续：跨设备阅读进度、PDF.js 自定义查看器
+- P3 后续：跨设备阅读进度、阅读器主题/划线注释
 - P4：Send-to-Kindle
 - P5：监控、备份与运维加固

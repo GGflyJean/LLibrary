@@ -1347,6 +1347,7 @@ dependencies = [
  "chrono",
  "clap",
  "cron",
+ "encoding_rs",
  "futures-util",
  "http-body-util",
  "http-range-header",

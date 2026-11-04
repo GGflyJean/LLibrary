@@ -1,4 +1,4 @@
-const CACHE = 'llibrary-v2';
+const CACHE = 'llibrary-v3';
 const ASSETS = [
   '/static/style.css',
   '/static/manifest.webmanifest',
@@ -8,7 +8,11 @@ const ASSETS = [
   '/static/reader.css',
   '/static/reader.js',
   '/static/epubjs/epub.min.js',
-  '/static/epubjs/jszip.min.js'
+  '/static/epubjs/jszip.min.js',
+  '/static/pdfjs/pdf.min.js',
+  '/static/pdfjs/pdf.worker.min.js',
+  '/static/reader-pdf.js',
+  '/static/reader-txt.js'
 ];
 
 self.addEventListener('install', (event) => {

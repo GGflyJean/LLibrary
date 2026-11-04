@@ -26,12 +26,34 @@
         </span>
       {% endif %}
       {% if is_pdf %}
+        <button type="button" id="reader-toc-toggle">目录</button>
+        <button type="button" id="pdf-prev">上一页</button>
+        <button type="button" id="pdf-next">下一页</button>
         <span class="reader-jump">
           <input id="pdf-page" type="number" min="1" max="{{ page_count }}" value="1" title="页码">
-          <span class="muted">/ {{ page_count }} 页</span>
+          <span class="muted">/ <span id="pdf-pages">{{ page_count }}</span> 页</span>
           <button type="button" id="pdf-jump">跳转</button>
         </span>
-        <span class="muted">缩放/目录请使用 PDF 查看器工具栏</span>
+        <span class="reader-zoom">
+          <button type="button" id="pdf-zoom-out">−</button>
+          <span id="pdf-zoom-value">100%</span>
+          <button type="button" id="pdf-zoom-in">+</button>
+          <button type="button" id="pdf-fit">适宽</button>
+        </span>
+      {% endif %}
+      {% if is_txt %}
+        <button type="button" id="txt-prev">上一页</button>
+        <button type="button" id="txt-next">下一页</button>
+        <span class="reader-jump">
+          <input id="txt-page" type="number" min="1" value="1" title="页码">
+          <span class="muted">/ <span id="txt-pages">1</span> 页</span>
+          <button type="button" id="txt-jump">跳转</button>
+        </span>
+        <span class="reader-zoom">
+          <button type="button" id="txt-zoom-out">A−</button>
+          <span id="txt-zoom-value">100%</span>
+          <button type="button" id="txt-zoom-in">A+</button>
+        </span>
       {% endif %}
       <a href="{{ download_url }}">下载</a>
       <a href="{{ back_url }}">返回书库</a>
@@ -39,7 +61,7 @@
     </span>
   </header>
 
-  {% if is_epub %}
+  {% if has_toc %}
   <aside id="reader-toc" class="reader-toc" hidden>
     <div class="reader-toc-head">
       <strong>目录</strong>
@@ -47,6 +69,9 @@
     </div>
     <div id="reader-toc-list" class="reader-toc-list">正在加载目录…</div>
   </aside>
+  {% endif %}
+
+  {% if is_epub %}
   <div id="viewer" data-url="{{ file_url }}" data-file-id="{{ file_id }}"></div>
   <script src="/static/epubjs/jszip.min.js"></script>
   <script src="/static/epubjs/epub.min.js"></script>
@@ -179,26 +204,19 @@
   {% endif %}
 
   {% if is_pdf %}
-  <iframe
-    class="pdf-frame"
-    id="pdf-frame"
-    src="{{ file_url }}"
-    data-url="{{ file_url }}"
-    data-pages="{{ page_count }}"
-    title="{{ title }}"></iframe>
-  <script>
-    (function () {
-      const frame = document.getElementById('pdf-frame');
-      const pageInput = document.getElementById('pdf-page');
-      const jumpButton = document.getElementById('pdf-jump');
-      jumpButton.addEventListener('click', function () {
-        const pages = Number(frame.dataset.pages) || 1;
-        const page = Math.max(1, Math.min(pages, Number(pageInput.value) || 1));
-        pageInput.value = page;
-        frame.src = frame.dataset.url + '#page=' + page;
-      });
-    })();
-  </script>
+  <div id="pdf-reader" class="pdf-reader" data-url="{{ file_url }}">
+    <div id="pdf-canvas-wrap" class="pdf-canvas-wrap"></div>
+    <div id="pdf-status" class="pdf-status">正在加载 PDF…</div>
+  </div>
+  <script src="/static/pdfjs/pdf.min.js"></script>
+  <script src="/static/reader-pdf.js"></script>
+  {% endif %}
+
+  {% if is_txt %}
+  <div id="txt-reader" class="txt-reader" data-url="{{ text_url }}">
+    <div id="txt-viewport" class="txt-viewport"><div id="txt-content" class="txt-content"></div></div>
+  </div>
+  <script src="/static/reader-txt.js"></script>
   {% endif %}
 
   {% if !supported %}
