@@ -92,3 +92,6 @@ body.reader-page {
   text-align: center;
 }
 .muted { color: #6d675f; }
+
+.reader-zoom { display: inline-flex; align-items: center; gap: 0.2rem; }
+.reader-zoom span { min-width: 2.8rem; text-align: center; color: #6d675f; font-size: 0.85rem; }

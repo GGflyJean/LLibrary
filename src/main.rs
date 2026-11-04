@@ -36,6 +36,8 @@ enum Command {
         #[command(subcommand)]
         command: SourcesCommand,
     },
+    /// 重新分类全部作品
+    Reclassify,
     /// 生成 Argon2 密码哈希
     HashPassword { password: String },
 }
@@ -75,6 +77,7 @@ async fn main() -> Result<()> {
         Command::Serve => serve().await,
         Command::Scan { source } => scan(source).await,
         Command::Sources { command } => sources(command).await,
+        Command::Reclassify => reclassify().await,
         Command::HashPassword { password } => {
             println!("{}", auth::hash_password(&password)?);
             Ok(())
@@ -156,6 +159,17 @@ async fn scan(source: Option<i64>) -> Result<()> {
         let reports = scanner.scan_all().await;
         println!("{}", serde_json::to_string_pretty(&reports)?);
     }
+    Ok(())
+}
+
+async fn reclassify() -> Result<()> {
+    init_tracing();
+    let config = Config::from_env()?;
+    config.ensure_dirs()?;
+    let db = Db::open(&config.db_path)?;
+    let reset = db.reset_clc()?;
+    let classified = clc::classify_unclassified(&db)?;
+    println!("已重置 {reset} 个作品，重新分类 {classified} 个作品");
     Ok(())
 }
 

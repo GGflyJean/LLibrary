@@ -313,6 +313,7 @@ pub const CATEGORIES: &[Category] = &[
             "市场",
             "企业家",
             "资本",
+            "21世纪资本论",
         ],
     },
     Category {
@@ -821,6 +822,10 @@ mod tests {
         assert_eq!(
             classify("美的历程", "李泽厚", "", "").map(|value| value.0),
             Some("B83".to_string())
+        );
+        assert_eq!(
+            classify("21世纪资本论", "皮凯蒂", "中信出版社", "").map(|value| value.0),
+            Some("F0".to_string())
         );
         assert!(classify("完全未知的书", "", "", "").is_none());
         assert_eq!(

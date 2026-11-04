@@ -14,6 +14,11 @@
         <button type="button" id="reader-toc-toggle">目录</button>
         <button type="button" id="reader-prev">上一页</button>
         <button type="button" id="reader-next">下一页</button>
+        <span class="reader-zoom">
+          <button type="button" id="reader-zoom-out">A−</button>
+          <span id="reader-zoom-value">100%</span>
+          <button type="button" id="reader-zoom-in">A+</button>
+        </span>
         <span class="reader-jump">
           <input id="reader-percent" type="number" min="0" max="100" step="1" value="0" title="阅读进度百分比">
           <span class="muted">%</span>
@@ -26,7 +31,7 @@
           <span class="muted">/ {{ page_count }} 页</span>
           <button type="button" id="pdf-jump">跳转</button>
         </span>
-        <span class="muted">目录请使用 PDF 查看器工具栏</span>
+        <span class="muted">缩放/目录请使用 PDF 查看器工具栏</span>
       {% endif %}
       <a href="{{ download_url }}">下载</a>
       <a href="{{ back_url }}">返回书库</a>
@@ -59,6 +64,25 @@
       });
       const saved = localStorage.getItem(key);
       rendition.display(saved || undefined);
+
+      const zoomKey = 'llibrary:zoom';
+      const zoomValue = document.getElementById('reader-zoom-value');
+      let zoom = Number(localStorage.getItem(zoomKey) || 100);
+      function applyZoom() {
+        zoom = Math.max(60, Math.min(220, zoom));
+        rendition.themes.fontSize(zoom + '%');
+        zoomValue.textContent = zoom + '%';
+        localStorage.setItem(zoomKey, String(zoom));
+      }
+      document.getElementById('reader-zoom-out').addEventListener('click', function () {
+        zoom -= 10;
+        applyZoom();
+      });
+      document.getElementById('reader-zoom-in').addEventListener('click', function () {
+        zoom += 10;
+        applyZoom();
+      });
+      applyZoom();
 
       const percentInput = document.getElementById('reader-percent');
       const jumpButton = document.getElementById('reader-jump');

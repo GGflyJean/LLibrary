@@ -190,6 +190,7 @@ struct SourceForm {
 #[derive(Debug, Deserialize)]
 struct SourcesQuery {
     added: Option<String>,
+    reclassified: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -220,6 +221,8 @@ pub fn router(state: AppState) -> Router {
         .route("/works/{id}", get(detail))
         .route("/read/{id}", get(read_file))
         .route("/files/{id}", get(file))
+        .route("/files/{id}/book.epub", get(file))
+        .route("/files/{id}/book.pdf", get(file))
         .route("/covers/{file}", get(cover))
         .route("/opds", get(opds_root))
         .route("/opds/all", get(opds_all))
@@ -232,6 +235,7 @@ pub fn router(state: AppState) -> Router {
         .route("/sources", get(sources_page).post(add_source))
         .route("/sources/{id}/delete", post(delete_source))
         .route("/sources/{id}/scan", post(scan_source))
+        .route("/reclassify", post(reclassify))
         .route("/api/scans", get(api_scans))
         .route("/api/scans/current", get(api_scan_current))
         .route("/api/scans/{id}", get(api_scan))
@@ -423,10 +427,15 @@ async fn read_file(
         Ok(Some(detail)) => detail.work.title,
         _ => record.basename.clone(),
     };
+    let file_url = if format == "epub" {
+        format!("/files/{}/book.epub", record.id)
+    } else {
+        format!("/files/{}/book.pdf", record.id)
+    };
     render(ReaderTemplate {
         title,
         file_id: record.id,
-        file_url: format!("/files/{}", record.id),
+        file_url,
         download_url,
         back_url,
         is_epub: format == "epub",
@@ -851,13 +860,16 @@ async fn sources_page(
         Ok(sources) => sources,
         Err(error) => return internal(error),
     };
+    let notice = if query.added.is_some() {
+        "来源已添加".to_string()
+    } else if let Some(count) = query.reclassified {
+        format!("已重新分类 {count} 个作品")
+    } else {
+        String::new()
+    };
     render(SourcesTemplate {
         sources,
-        notice: if query.added.is_some() {
-            "来源已添加".to_string()
-        } else {
-            String::new()
-        },
+        notice,
         error: String::new(),
         has_secret: state.config.secret.is_some(),
     })
@@ -992,6 +1004,22 @@ async fn scan_source(
     }
     match state.scanner.enqueue_source(id).await {
         Ok(()) => Redirect::to("/sources").into_response(),
+        Err(error) => internal(error),
+    }
+}
+
+async fn reclassify(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    if let Some(response) = require_web(&state, &headers) {
+        return response;
+    }
+    let db = state.db.clone();
+    match blocking(move || {
+        db.reset_clc()?;
+        crate::clc::classify_unclassified(&db)
+    })
+    .await
+    {
+        Ok(count) => Redirect::to(&format!("/sources?reclassified={count}")).into_response(),
         Err(error) => internal(error),
     }
 }
@@ -1856,9 +1884,10 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let body = body_text(response).await;
         assert!(body.contains("epub.min.js"));
-        assert!(body.contains(&format!("data-url=\"/files/{file}\"")));
+        assert!(body.contains(&format!("data-url=\"/files/{file}/book.epub\"")));
         assert!(body.contains("reader-toc-toggle"));
         assert!(body.contains("reader-percent"));
+        assert!(body.contains("reader-zoom-in"));
         assert!(body.contains("reader-jump"));
 
         let response = app
@@ -1902,7 +1931,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let body = body_text(response).await;
         assert!(body.contains("<iframe"));
-        assert!(body.contains(&format!("/files/{pdf_id}")));
+        assert!(body.contains(&format!("/files/{pdf_id}/book.pdf")));
         assert!(body.contains("pdf-page"));
         assert!(body.contains("pdf-jump"));
 
@@ -1972,7 +2001,7 @@ mod tests {
 
     #[tokio::test]
     async fn sources_page_and_management() {
-        let (dir, state, _work, _file) = test_state();
+        let (dir, state, work, _file) = test_state();
         let app = router(state.clone());
 
         let response = app
@@ -1989,6 +2018,18 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         assert!(body_text(response).await.contains("添加来源"));
+
+        state.db.set_work_clc(work, "A7", "马克思主义理论").unwrap();
+        let response = app
+            .clone()
+            .oneshot(post_form("/reclassify", "", true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert_eq!(
+            state.db.get_work(work).unwrap().unwrap().work.clc_code,
+            "B2"
+        );
 
         let path = dir.path().to_string_lossy().to_string();
         let form = url::form_urlencoded::Serializer::new(String::new())

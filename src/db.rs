@@ -665,6 +665,15 @@ impl Db {
         Ok(out)
     }
 
+    pub fn reset_clc(&self) -> Result<usize> {
+        let conn = self.connection()?;
+        let changed = conn.execute(
+            "UPDATE works SET clc_code = '', clc_label = '', updated_at = ?1",
+            params![now()],
+        )?;
+        Ok(changed)
+    }
+
     pub fn set_work_clc_batch(&self, updates: &[(i64, String, String)]) -> Result<()> {
         if updates.is_empty() {
             return Ok(());
