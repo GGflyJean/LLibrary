@@ -183,6 +183,14 @@ templates/      Askama 模板
 static/         CSS、PWA manifest、service worker、htmx
 ```
 
+## 内存与资源
+
+- 服务端文件接口是流式传输；PDF 封面在本地来源下直接用文件路径调用 `pdftoppm`，不再把整本 PDF 读进服务进程内存。
+- 首次全量扫描会逐个读取文件计算指纹和元数据，大 PDF 可能造成短时内存峰值；扫描结束后 Rust/glibc 不一定立即把内存还给操作系统。
+- Docker 默认不限制容器内存。可在 Compose 增加 `mem_limit: 3g`（按 `docker stats` 实测调整），防止极端文件占满 16G 主机内存。
+- 浏览器阅读器：PDF.js/EPUB.js 会占用内存；关闭浮层会主动销毁 PDF 文档/worker、EPUB rendition 和 Canvas。但浏览器/OS 的内存高水位不一定马上回落，彻底释放请关闭标签页或刷新页面。
+- WebDAV 来源的 PDF 封面仍需要临时读取文件；本地挂载来源没有这个问题。
+
 ## 数据与备份
 
 - 数据库、封面、日志均在 `DATA_DIR`；不复制书籍文件。

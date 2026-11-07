@@ -23,6 +23,19 @@
   let scale = 1;
   let fitWidth = true;
   let renderTask = null;
+  let cleaned = false;
+
+  window.__llibraryCleanup = function () {
+    if (cleaned) return;
+    cleaned = true;
+    if (renderTask) {
+      try { renderTask.cancel(); } catch (error) { /* ignore */ }
+      renderTask = null;
+    }
+    try { if (pdfDoc) pdfDoc.destroy(); } catch (error) { /* ignore */ }
+    try { if (loadingTask) loadingTask.destroy(); } catch (error) { /* ignore */ }
+    wrap.replaceChildren();
+  };
 
   const loadingTask = pdfjsLib.getDocument({
     url: url,

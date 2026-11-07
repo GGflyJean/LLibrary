@@ -1365,11 +1365,18 @@ async fn maybe_pdf_cover(state: &AppState, work_id: i64) -> Result<()> {
     let source_id = pdf.source_id;
     let config = blocking(move || load_source_config(&db, secret.as_deref(), source_id)).await?;
     let backend = SourceBackend::build(&config)?;
-    let bytes = backend.read(&pdf.rel_path).await?;
     let covers = state.covers.clone();
-    let path =
-        tokio::task::spawn_blocking(move || covers.save_pdf_cover(work_id, &bytes)).await??;
-    tracing::debug!(work_id, %path, "按需生成 PDF 封面完成");
+    if let Some(local) = backend.local() {
+        let input = local.resolve(&pdf.rel_path);
+        let path = tokio::task::spawn_blocking(move || covers.save_pdf_cover_path(work_id, &input))
+            .await??;
+        tracing::debug!(work_id, %path, "按需生成 PDF 封面完成");
+    } else {
+        let bytes = backend.read(&pdf.rel_path).await?;
+        let path =
+            tokio::task::spawn_blocking(move || covers.save_pdf_cover(work_id, &bytes)).await??;
+        tracing::debug!(work_id, %path, "按需生成 PDF 封面完成");
+    }
     Ok(())
 }
 

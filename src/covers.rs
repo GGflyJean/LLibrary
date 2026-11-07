@@ -94,7 +94,22 @@ impl CoverStore {
     }
 
     pub fn save_pdf_cover(&self, work_id: i64, pdf_bytes: &[u8]) -> Result<String> {
-        match self.try_render_pdf(pdf_bytes, work_id) {
+        let unique = format!(
+            "llibrary-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        );
+        let input = std::env::temp_dir().join(format!("{unique}.pdf"));
+        std::fs::write(&input, pdf_bytes)?;
+        let result = self.save_pdf_cover_path(work_id, &input);
+        let _ = std::fs::remove_file(&input);
+        result
+    }
+
+    pub fn save_pdf_cover_path(&self, work_id: i64, input: &Path) -> Result<String> {
+        match self.try_render_pdf_path(input, work_id) {
             Ok(path) => {
                 let _ = self.mark_ready(work_id);
                 Ok(path)
@@ -108,7 +123,7 @@ impl CoverStore {
         }
     }
 
-    fn try_render_pdf(&self, pdf_bytes: &[u8], work_id: i64) -> Result<String> {
+    fn try_render_pdf_path(&self, input: &Path, work_id: i64) -> Result<String> {
         let unique = format!(
             "llibrary-{}-{}",
             std::process::id(),
@@ -116,10 +131,7 @@ impl CoverStore {
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_nanos()
         );
-        let temp_dir = std::env::temp_dir();
-        let input = temp_dir.join(format!("{unique}.pdf"));
-        let prefix = temp_dir.join(&unique);
-        std::fs::write(&input, pdf_bytes)?;
+        let prefix = std::env::temp_dir().join(&unique);
 
         let output = Command::new(&self.pdftoppm)
             .args([
@@ -132,11 +144,11 @@ impl CoverStore {
                 "-jpeg",
                 "-singlefile",
             ])
-            .arg(&input)
+            .arg(input)
             .arg(&prefix)
             .output();
 
-        let result = match output {
+        match output {
             Ok(output) if output.status.success() => {
                 let rendered = prefix.with_extension("jpg");
                 let data = std::fs::read(&rendered)
@@ -154,10 +166,7 @@ impl CoverStore {
                 String::from_utf8_lossy(&output.stderr)
             )),
             Err(error) => Err(anyhow::anyhow!("pdftoppm 不可用: {error}")),
-        };
-
-        let _ = std::fs::remove_file(&input);
-        result
+        }
     }
 }
 
