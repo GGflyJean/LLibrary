@@ -1,4 +1,4 @@
-const CACHE = 'llibrary-v8';
+const CACHE = 'llibrary-v9';
 const ASSETS = [
   '/static/style.css',
   '/static/manifest.webmanifest',

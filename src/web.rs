@@ -304,7 +304,7 @@ async fn index(
         format: clean(query.format),
         source_id,
     };
-    let flat = filter.query.is_some() || compact;
+    let flat = filter.query.is_some();
     let db = state.db.clone();
     let filter_db = filter.clone();
     let result = blocking(move || {
@@ -2008,7 +2008,7 @@ mod tests {
         assert!(body.contains("compact-view"));
         assert!(body.contains("共 2 个作品"));
         assert!(body.contains("论语译注"));
-        assert!(!body.contains("clc-level1"));
+        assert!(body.contains("clc-level1"));
     }
 
     #[tokio::test]

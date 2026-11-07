@@ -50,7 +50,7 @@
   {% if works.is_empty() %}
     <p class="empty">没有找到作品。</p>
   {% else %}
-    <p class="muted"><a href="?q={{ query }}&publisher={{ publisher }}&format={{ format }}&source={{ source_id }}&view=detail">← 分类浏览</a></p>
+    <p class="muted"><a href="?q={{ query }}&publisher={{ publisher }}&format={{ format }}&source={{ source_id }}&view={{ view_mode }}">← 分类浏览</a></p>
     <div class="grid">
     {% for work in works %}
       {% include "_card.html" %}
@@ -67,10 +67,10 @@
     <p class="empty">没有找到作品。</p>
   {% else %}
     {% for top in tree %}
-    <details class="clc-level1">
+    <details class="clc-level1" {% if compact %}open{% endif %}>
       <summary><span class="clc-code">{{ top.code }}</span> {{ top.label }} <span class="muted">({{ top.count }})</span></summary>
       {% for group in top.children %}
-      <details class="clc-level2">
+      <details class="clc-level2" {% if compact %}open{% endif %}>
         <summary><span class="clc-code">{{ group.code }}</span> {{ group.label }} <span class="muted">({{ group.count }})</span></summary>
         <div class="grid">
           {% for work in group.works %}
