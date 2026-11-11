@@ -1,4 +1,7 @@
 use std::collections::HashSet;
+use std::fs::File;
+use std::io::Read;
+use std::path::Path;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
@@ -7,14 +10,17 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 use chrono::Utc;
 use cron::Schedule;
-use tokio::sync::{mpsc, Mutex};
+use futures_util::StreamExt;
+use tokio::sync::{mpsc, Mutex, Semaphore};
 
 use crate::covers::CoverStore;
 use crate::crypto::SecretBox;
 use crate::db::{Db, NewFile};
 use crate::metadata;
-use crate::models::{BookMetadata, ScanProgress, ScanReport, ScanStats, SourceConfig, SourceKind};
-use crate::sources::SourceBackend;
+use crate::models::{
+    BookMetadata, ScanProgress, ScanReport, ScanStats, SourceConfig, SourceKind, SourceRecord,
+};
+use crate::sources::{SourceBackend, SourceEntry};
 
 #[derive(Debug, Clone)]
 pub enum ScanCommand {
@@ -165,146 +171,63 @@ impl Scanner {
         let total = files.len();
         let mut seen = HashSet::new();
         let mut errors: Vec<String> = Vec::new();
+        let backend = Arc::new(backend);
+        let large_files = Arc::new(Semaphore::new(LARGE_FILE_WORKERS));
+        let mut processed_count = 0usize;
 
-        for (index, entry) in files.iter().enumerate() {
-            seen.insert(entry.rel_path.clone());
+        let mut stream = futures_util::stream::iter(files.into_iter().map(|entry| {
+            let backend = backend.clone();
+            let db = self.db.clone();
+            let source = source.clone();
+            let large_files = large_files.clone();
+            let rel_path = entry.rel_path.clone();
+            async move {
+                (
+                    rel_path,
+                    process_entry(backend, db, source, entry, large_files).await,
+                )
+            }
+        }))
+        .buffer_unordered(SCAN_WORKERS);
+
+        while let Some((rel_path, outcome)) = stream.next().await {
+            seen.insert(rel_path.clone());
+            match outcome {
+                Ok(ScanOutcome::Skipped) => stats.skipped += 1,
+                Ok(ScanOutcome::Processed(processed)) => {
+                    if let Some(error) = &processed.error {
+                        stats.errors += 1;
+                        errors.push(format!("{}: {error}", processed.entry.rel_path));
+                    }
+                    match self.persist(&source, &processed) {
+                        Ok(()) => {
+                            if processed.existing {
+                                stats.changed += 1;
+                            } else {
+                                stats.new += 1;
+                            }
+                        }
+                        Err(error) => {
+                            stats.errors += 1;
+                            errors.push(format!("{}: {error}", processed.entry.rel_path));
+                        }
+                    }
+                }
+                Err(error) => {
+                    stats.errors += 1;
+                    errors.push(format!("{rel_path}: {error}"));
+                }
+            }
+            processed_count += 1;
             self.set_progress(Some(ScanProgress {
                 run_id,
                 source_id,
                 source_name: source.name.clone(),
                 phase: "scanning".to_string(),
-                processed: index,
+                processed: processed_count,
                 total,
                 stats: stats.clone(),
             }));
-
-            let existing = self.db.find_file(source_id, &entry.rel_path)?;
-            if let Some(existing) = &existing {
-                let hash_ok = source.hash_policy != "hash" || !existing.hash.is_empty();
-                if !existing.missing
-                    && existing.size == entry.size as i64
-                    && existing.mtime == entry.mtime
-                    && hash_ok
-                {
-                    stats.skipped += 1;
-                    continue;
-                }
-            }
-
-            let bytes = match backend.read(&entry.rel_path).await {
-                Ok(bytes) => bytes,
-                Err(error) => {
-                    stats.errors += 1;
-                    errors.push(format!("{}: {error}", entry.rel_path));
-                    if let Some(existing) = &existing {
-                        self.db.set_file_error(existing.id, &error.to_string())?;
-                    }
-                    continue;
-                }
-            };
-
-            let hash = if source.hash_policy == "hash" {
-                blake3::hash(&bytes).to_hex().to_string()
-            } else {
-                String::new()
-            };
-            let format = metadata::extension_of(&entry.rel_path);
-            let fallback = std::panic::catch_unwind(|| metadata::parse_filename(&entry.rel_path))
-                .unwrap_or_else(|_| metadata::FilenameInfo {
-                    title: metadata::basename_of(&entry.rel_path),
-                    author: String::new(),
-                });
-            let extraction = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                metadata::extract(&format, &bytes, &entry.rel_path)
-            }));
-            let (mut book, cover, page_count, parse_error) = match extraction {
-                Ok(Ok(extracted)) => (
-                    extracted.metadata,
-                    extracted.cover,
-                    extracted.page_count,
-                    None,
-                ),
-                Ok(Err(error)) => {
-                    stats.errors += 1;
-                    errors.push(format!("{}: {error}", entry.rel_path));
-                    (
-                        BookMetadata {
-                            title: fallback.title.clone(),
-                            authors: fallback.author.clone(),
-                            ..Default::default()
-                        },
-                        None,
-                        0,
-                        Some(error.to_string()),
-                    )
-                }
-                Err(_) => {
-                    stats.errors += 1;
-                    errors.push(format!("{}: 元数据解析 panic", entry.rel_path));
-                    (
-                        BookMetadata {
-                            title: fallback.title.clone(),
-                            authors: fallback.author.clone(),
-                            ..Default::default()
-                        },
-                        None,
-                        0,
-                        Some("元数据解析 panic".to_string()),
-                    )
-                }
-            };
-            if book.title.trim().is_empty() {
-                book.title = fallback.title.clone();
-            }
-            if book.authors.trim().is_empty() {
-                book.authors = fallback.author.clone();
-            }
-            if book.publisher.trim().is_empty() {
-                book.publisher = publisher_from_path(&entry.rel_path);
-            }
-            let basename = metadata::basename_of(&entry.rel_path);
-            let work_id = self.find_or_create_work(&book, &basename)?;
-
-            let update = if format == "epub" {
-                book.clone()
-            } else {
-                BookMetadata::default()
-            };
-            self.db.update_work_metadata(work_id, &update, None)?;
-
-            let cover_url = if format == "epub" {
-                match cover {
-                    Some(bytes) => self.covers.save_epub_cover(work_id, &bytes)?,
-                    None => None,
-                }
-            } else {
-                None
-            };
-            if let Some(cover_url) = cover_url {
-                self.db.set_work_cover(work_id, &cover_url)?;
-            } else if !self.covers.path_for(work_id).exists() {
-                let placeholder = self.covers.ensure_placeholder(work_id)?;
-                self.db.set_work_cover(work_id, &placeholder)?;
-            }
-
-            self.db.upsert_file(&NewFile {
-                work_id,
-                source_id,
-                rel_path: entry.rel_path.clone(),
-                basename,
-                format,
-                size: entry.size as i64,
-                mtime: entry.mtime,
-                hash,
-                page_count,
-                error: parse_error,
-            })?;
-
-            if existing.is_some() {
-                stats.changed += 1;
-            } else {
-                stats.new += 1;
-            }
         }
 
         stats.missing = self.db.mark_missing(source_id, &seen)?;
@@ -328,10 +251,54 @@ impl Scanner {
 
         Ok(ScanReport {
             source_id,
-            source_name: source.name,
+            source_name: source.name.clone(),
             stats,
             error: error_summary,
         })
+    }
+
+    fn persist(&self, source: &SourceRecord, processed: &ProcessedFile) -> Result<()> {
+        let entry = &processed.entry;
+        let format = metadata::extension_of(&entry.rel_path);
+        let basename = metadata::basename_of(&entry.rel_path);
+        let book = &processed.extracted.metadata;
+        let work_id = self.find_or_create_work(book, &basename)?;
+
+        let update = if format == "epub" {
+            book.clone()
+        } else {
+            BookMetadata::default()
+        };
+        self.db.update_work_metadata(work_id, &update, None)?;
+
+        let cover_url = if format == "epub" {
+            match processed.extracted.cover.as_ref() {
+                Some(bytes) => self.covers.save_epub_cover(work_id, bytes)?,
+                None => None,
+            }
+        } else {
+            None
+        };
+        if let Some(cover_url) = cover_url {
+            self.db.set_work_cover(work_id, &cover_url)?;
+        } else if !self.covers.path_for(work_id).exists() {
+            let placeholder = self.covers.ensure_placeholder(work_id)?;
+            self.db.set_work_cover(work_id, &placeholder)?;
+        }
+
+        self.db.upsert_file(&NewFile {
+            work_id,
+            source_id: source.id,
+            rel_path: entry.rel_path.clone(),
+            basename,
+            format,
+            size: entry.size as i64,
+            mtime: entry.mtime,
+            hash: processed.hash.clone(),
+            page_count: processed.extracted.page_count,
+            error: processed.error.clone(),
+        })?;
+        Ok(())
     }
 
     fn find_or_create_work(&self, book: &BookMetadata, basename: &str) -> Result<i64> {
@@ -503,6 +470,166 @@ fn publisher_from_path(rel_path: &str) -> String {
     } else {
         String::new()
     }
+}
+
+const SCAN_WORKERS: usize = 10;
+const LARGE_FILE_BYTES: u64 = 32 * 1024 * 1024;
+const LARGE_FILE_WORKERS: usize = 2;
+
+struct ProcessedFile {
+    entry: SourceEntry,
+    existing: bool,
+    extracted: metadata::Extracted,
+    hash: String,
+    error: Option<String>,
+}
+
+enum ScanOutcome {
+    Skipped,
+    Processed(Box<ProcessedFile>),
+}
+
+async fn process_entry(
+    backend: Arc<SourceBackend>,
+    db: Db,
+    source: SourceRecord,
+    entry: SourceEntry,
+    large_files: Arc<Semaphore>,
+) -> Result<ScanOutcome> {
+    let existing = db.find_file(source.id, &entry.rel_path)?;
+    if let Some(existing) = &existing {
+        let hash_ok = source.hash_policy != "hash" || !existing.hash.is_empty();
+        if !existing.missing
+            && existing.size == entry.size as i64
+            && existing.mtime == entry.mtime
+            && hash_ok
+        {
+            return Ok(ScanOutcome::Skipped);
+        }
+    }
+
+    let _permit = if entry.size > LARGE_FILE_BYTES {
+        Some(
+            large_files
+                .acquire_owned()
+                .await
+                .map_err(|_| anyhow::anyhow!("大文件并发限制已关闭"))?,
+        )
+    } else {
+        None
+    };
+
+    let materialized = match backend.materialize(&entry.rel_path).await {
+        Ok(materialized) => materialized,
+        Err(error) => {
+            if let Some(existing) = &existing {
+                let _ = db.set_file_error(existing.id, &error.to_string());
+            }
+            return Err(error);
+        }
+    };
+    let path = materialized.path.clone();
+    let existing_flag = existing.is_some();
+    let result =
+        tokio::task::spawn_blocking(move || process_file(&source, &entry, &path, existing_flag))
+            .await
+            .context("扫描任务失败")?;
+    drop(materialized);
+    let processed = match result {
+        Ok(processed) => processed,
+        Err(error) => {
+            if let Some(existing) = &existing {
+                let _ = db.set_file_error(existing.id, &error.to_string());
+            }
+            return Err(error);
+        }
+    };
+    Ok(ScanOutcome::Processed(Box::new(processed)))
+}
+
+fn process_file(
+    source: &SourceRecord,
+    entry: &SourceEntry,
+    path: &Path,
+    existing: bool,
+) -> Result<ProcessedFile> {
+    let hash = if source.hash_policy == "hash" {
+        hash_file(path)?
+    } else {
+        String::new()
+    };
+    let format = metadata::extension_of(&entry.rel_path);
+    let fallback = std::panic::catch_unwind(|| metadata::parse_filename(&entry.rel_path))
+        .unwrap_or_else(|_| metadata::FilenameInfo {
+            title: metadata::basename_of(&entry.rel_path),
+            author: String::new(),
+        });
+    let extraction = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        metadata::extract_from_path(&format, path, &entry.rel_path)
+    }));
+    let (mut book, cover, page_count, parse_error) = match extraction {
+        Ok(Ok(extracted)) => (
+            extracted.metadata,
+            extracted.cover,
+            extracted.page_count,
+            None,
+        ),
+        Ok(Err(error)) => (
+            BookMetadata {
+                title: fallback.title.clone(),
+                authors: fallback.author.clone(),
+                ..Default::default()
+            },
+            None,
+            0,
+            Some(error.to_string()),
+        ),
+        Err(_) => (
+            BookMetadata {
+                title: fallback.title.clone(),
+                authors: fallback.author.clone(),
+                ..Default::default()
+            },
+            None,
+            0,
+            Some("元数据解析 panic".to_string()),
+        ),
+    };
+    if book.title.trim().is_empty() {
+        book.title = fallback.title.clone();
+    }
+    if book.authors.trim().is_empty() {
+        book.authors = fallback.author.clone();
+    }
+    if book.publisher.trim().is_empty() {
+        book.publisher = publisher_from_path(&entry.rel_path);
+    }
+
+    Ok(ProcessedFile {
+        entry: entry.clone(),
+        existing,
+        extracted: metadata::Extracted {
+            metadata: book,
+            cover,
+            page_count,
+        },
+        hash,
+        error: parse_error,
+    })
+}
+
+fn hash_file(path: &Path) -> Result<String> {
+    let mut file = File::open(path).with_context(|| format!("无法读取文件: {}", path.display()))?;
+    let mut hasher = blake3::Hasher::new();
+    let mut buffer = vec![0u8; 1024 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hasher.finalize().to_hex().to_string())
 }
 
 #[cfg(test)]

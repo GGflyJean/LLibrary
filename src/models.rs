@@ -135,6 +135,13 @@ impl FileRecord {
     pub fn is_txt(&self) -> bool {
         self.format.eq_ignore_ascii_case("txt")
     }
+
+    pub fn is_kindle(&self) -> bool {
+        matches!(
+            self.format.to_ascii_lowercase().as_str(),
+            "azw3" | "azw" | "mobi"
+        )
+    }
 }
 
 impl WorkSummary {

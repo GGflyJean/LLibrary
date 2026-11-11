@@ -54,11 +54,11 @@
           </td>
           <td class="actions">
             {% if !file.missing %}
-              {% if file.is_epub() || file.is_pdf() || file.is_txt() %}
+              {% if file.is_epub() || file.is_pdf() || file.is_txt() || file.is_kindle() %}
                 <button type="button" class="link" data-reader-url="/read/{{ file.id }}" data-reader-title="{{ work.title }}">浮层阅读</button>
                 <a href="/read/{{ file.id }}" target="_blank" rel="noopener">新标签页</a>
               {% else %}
-                <span class="muted">在线阅读请使用 EPUB</span>
+                <span class="muted">此格式暂不支持在线预览</span>
               {% endif %}
               <a href="/files/{{ file.id }}">下载</a>
             {% endif %}

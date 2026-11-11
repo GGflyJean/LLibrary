@@ -1,6 +1,8 @@
 use std::collections::HashMap;
+use std::fs::File;
 use std::io::{Cursor, Read};
 use std::path::Path;
+use std::process::Command;
 
 use anyhow::{Context, Result};
 use quick_xml::events::{BytesStart, Event};
@@ -53,31 +55,7 @@ pub fn basename_of(rel_path: &str) -> String {
 pub fn extract(format: &str, bytes: &[u8], rel_path: &str) -> Result<Extracted> {
     match format {
         "epub" => parse_epub(bytes),
-        "pdf" => {
-            let info = parse_pdf(bytes)?;
-            let fallback = parse_filename(rel_path);
-            let title = if fallback.title.trim().is_empty() {
-                info.title
-            } else {
-                fallback.title.clone()
-            };
-            let authors = if !fallback.author.trim().is_empty() {
-                fallback.author.clone()
-            } else if is_generic_pdf_author(&info.authors) {
-                String::new()
-            } else {
-                info.authors
-            };
-            Ok(Extracted {
-                metadata: BookMetadata {
-                    title,
-                    authors,
-                    ..Default::default()
-                },
-                cover: None,
-                page_count: info.page_count,
-            })
-        }
+        "pdf" => Ok(pdf_extracted(parse_pdf(bytes)?, rel_path)),
         _ => {
             let fallback = parse_filename(rel_path);
             Ok(Extracted {
@@ -86,6 +64,46 @@ pub fn extract(format: &str, bytes: &[u8], rel_path: &str) -> Result<Extracted> 
                 page_count: 0,
             })
         }
+    }
+}
+
+pub fn extract_from_path(format: &str, path: &Path, rel_path: &str) -> Result<Extracted> {
+    match format {
+        "epub" => parse_epub_path(path),
+        "pdf" => Ok(pdf_extracted(parse_pdf_file(path)?, rel_path)),
+        _ => {
+            let fallback = parse_filename(rel_path);
+            Ok(Extracted {
+                metadata: fallback_metadata(&fallback),
+                cover: None,
+                page_count: 0,
+            })
+        }
+    }
+}
+
+fn pdf_extracted(info: PdfInfo, rel_path: &str) -> Extracted {
+    let fallback = parse_filename(rel_path);
+    let title = if fallback.title.trim().is_empty() {
+        info.title
+    } else {
+        fallback.title.clone()
+    };
+    let authors = if !fallback.author.trim().is_empty() {
+        fallback.author.clone()
+    } else if is_generic_pdf_author(&info.authors) {
+        String::new()
+    } else {
+        info.authors
+    };
+    Extracted {
+        metadata: BookMetadata {
+            title,
+            authors,
+            ..Default::default()
+        },
+        cover: None,
+        page_count: info.page_count,
     }
 }
 
@@ -99,11 +117,21 @@ fn fallback_metadata(info: &FilenameInfo) -> BookMetadata {
 
 pub fn parse_epub(bytes: &[u8]) -> Result<Extracted> {
     let mut archive = ZipArchive::new(Cursor::new(bytes)).context("无法打开 EPUB zip")?;
-    let container = read_zip_entry(&mut archive, "META-INF/container.xml")
+    parse_epub_archive(&mut archive)
+}
+
+pub fn parse_epub_path(path: &Path) -> Result<Extracted> {
+    let file = File::open(path).with_context(|| format!("无法打开 EPUB: {}", path.display()))?;
+    let mut archive = ZipArchive::new(file).context("无法打开 EPUB zip")?;
+    parse_epub_archive(&mut archive)
+}
+
+fn parse_epub_archive<R: Read + std::io::Seek>(archive: &mut ZipArchive<R>) -> Result<Extracted> {
+    let container = read_zip_entry(archive, "META-INF/container.xml")
         .context("EPUB 缺少 META-INF/container.xml")?;
     let opf_path = parse_container(&container)?;
-    let opf = read_zip_entry(&mut archive, &opf_path)
-        .with_context(|| format!("EPUB 缺少 OPF: {opf_path}"))?;
+    let opf =
+        read_zip_entry(archive, &opf_path).with_context(|| format!("EPUB 缺少 OPF: {opf_path}"))?;
     let parsed = parse_opf(&opf)?;
 
     let mut cover = None;
@@ -117,7 +145,7 @@ pub fn parse_epub(bytes: &[u8]) -> Result<Extracted> {
         .or_else(|| parsed.first_image.clone());
     if let Some(href) = candidates {
         let cover_path = resolve_zip_path(&base, &href);
-        if let Ok(data) = read_zip_entry(&mut archive, &cover_path) {
+        if let Ok(data) = read_zip_entry(archive, &cover_path) {
             cover = Some(data);
         }
     }
@@ -377,6 +405,35 @@ fn is_generic_pdf_author(value: &str) -> bool {
 
 pub fn parse_pdf(bytes: &[u8]) -> Result<PdfInfo> {
     let document = lopdf::Document::load_mem(bytes).context("无法解析 PDF")?;
+    let page_count = document.get_pages().len() as i64;
+    let (title, authors) = pdf_metadata(&document);
+    Ok(PdfInfo {
+        page_count,
+        title,
+        authors,
+    })
+}
+
+pub fn parse_pdf_file(path: &Path) -> Result<PdfInfo> {
+    if let Ok(output) = Command::new("pdfinfo").arg(path).output() {
+        if output.status.success() {
+            let text = String::from_utf8_lossy(&output.stdout);
+            let mut info = PdfInfo::default();
+            for line in text.lines() {
+                if let Some(value) = line.strip_prefix("Pages:") {
+                    info.page_count = value.trim().parse().unwrap_or(0);
+                } else if let Some(value) = line.strip_prefix("Title:") {
+                    info.title = value.trim().to_string();
+                } else if let Some(value) = line.strip_prefix("Author:") {
+                    info.authors = value.trim().to_string();
+                }
+            }
+            if info.page_count > 0 || !info.title.is_empty() || !info.authors.is_empty() {
+                return Ok(info);
+            }
+        }
+    }
+    let document = lopdf::Document::load(path).context("无法解析 PDF")?;
     let page_count = document.get_pages().len() as i64;
     let (title, authors) = pdf_metadata(&document);
     Ok(PdfInfo {

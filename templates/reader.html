@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ title }}</title>
-  <link rel="stylesheet" href="/static/reader.css?v=9">
+  <link rel="stylesheet" href="/static/reader.css?v=10">
 </head>
 <body class="reader-page" data-back-url="{{ back_url }}">
   <header class="reader-header">
@@ -53,6 +53,21 @@
           <button type="button" id="txt-zoom-out">A−</button>
           <span id="txt-zoom-value">100%</span>
           <button type="button" id="txt-zoom-in">A+</button>
+        </span>
+      {% endif %}
+      {% if is_kindle %}
+        <button type="button" id="reader-toc-toggle">目录</button>
+        <button type="button" id="reader-prev">上一页</button>
+        <button type="button" id="reader-next">下一页</button>
+        <span class="reader-zoom">
+          <button type="button" id="reader-zoom-out">A−</button>
+          <span id="reader-zoom-value">100%</span>
+          <button type="button" id="reader-zoom-in">A+</button>
+        </span>
+        <span class="reader-jump">
+          <input id="reader-percent" type="number" min="0" max="100" step="1" value="0" title="阅读进度百分比">
+          <span class="muted">%</span>
+          <button type="button" id="reader-jump">跳转</button>
         </span>
       {% endif %}
       <a href="{{ download_url }}">下载</a>
@@ -218,14 +233,22 @@
     <div id="pdf-status" class="pdf-status">正在加载 PDF…</div>
   </div>
   <script src="/static/pdfjs/pdf.min.js"></script>
-  <script src="/static/reader-pdf.js?v=9"></script>
+  <script src="/static/reader-pdf.js?v=10"></script>
   {% endif %}
 
   {% if is_txt %}
   <div id="txt-reader" class="txt-reader" data-url="{{ text_url }}">
     <div id="txt-viewport" class="txt-viewport"><div id="txt-content" class="txt-content"></div></div>
   </div>
-  <script src="/static/reader-txt.js?v=9"></script>
+  <script src="/static/reader-txt.js?v=10"></script>
+  {% endif %}
+
+  {% if is_kindle %}
+  <div id="kindle-reader" class="kindle-reader" data-url="{{ file_url }}" data-file-id="{{ file_id }}">
+    <foliate-view id="kindle-view"></foliate-view>
+    <div id="kindle-status" class="kindle-status">正在加载电子书…</div>
+  </div>
+  <script type="module" src="/static/reader-kindle.js?v=10"></script>
   {% endif %}
 
   {% if !supported %}

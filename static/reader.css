@@ -110,3 +110,19 @@ body.reader-page {
   overflow-wrap: anywhere;
   color: #23201c;
 }
+
+.kindle-reader { flex: 1; min-height: 0; position: relative; display: flex; background: #f6f4ef; }
+.kindle-reader foliate-view { flex: 1; min-height: 0; width: 100%; height: 100%; }
+.kindle-status {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  background: rgba(246, 244, 239, 0.94);
+  color: #6d675f;
+  text-align: center;
+  font-size: 0.95rem;
+}
+.kindle-status[hidden] { display: none; }

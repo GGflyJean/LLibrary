@@ -93,6 +93,7 @@ struct ReaderTemplate {
     is_epub: bool,
     is_pdf: bool,
     is_txt: bool,
+    is_kindle: bool,
     text_url: String,
     has_toc: bool,
     supported: bool,
@@ -555,6 +556,7 @@ async fn read_file(
             is_epub: false,
             is_pdf: false,
             is_txt: true,
+            is_kindle: false,
             text_url: format!("/text/{}", record.id),
             has_toc: false,
             supported: true,
@@ -582,11 +584,12 @@ async fn read_file(
             is_epub: false,
             is_pdf: false,
             is_txt: false,
+            is_kindle: true,
             text_url: String::new(),
-            has_toc: false,
-            supported: false,
+            has_toc: true,
+            supported: true,
             page_count: 0,
-            message: "此格式暂不支持在线阅读；请下载，或使用同一作品的 EPUB。".to_string(),
+            message: String::new(),
         });
     }
 
@@ -614,6 +617,7 @@ async fn read_file(
         is_epub: format == "epub",
         is_pdf: format == "pdf",
         is_txt: false,
+        is_kindle: false,
         text_url: String::new(),
         has_toc: format == "epub" || format == "pdf",
         supported: true,
@@ -2098,6 +2102,16 @@ mod tests {
         for asset in [
             "/static/pdfjs/pdf.min.js",
             "/static/pdfjs/pdf.worker.min.js",
+            "/static/reader-kindle.js",
+            "/static/foliate/view.js",
+            "/static/foliate/mobi.js",
+            "/static/foliate/paginator.js",
+            "/static/foliate/overlayer.js",
+            "/static/foliate/epubcfi.js",
+            "/static/foliate/progress.js",
+            "/static/foliate/text-walker.js",
+            "/static/foliate/fixed-layout.js",
+            "/static/foliate/vendor/fflate.js",
         ] {
             let response = app.clone().oneshot(request(asset, false)).await.unwrap();
             assert_eq!(response.status(), StatusCode::OK);
@@ -2173,7 +2187,21 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        assert!(body_text(response).await.contains("暂不支持在线阅读"));
+        let body = body_text(response).await;
+        assert!(body.contains("kindle-view"));
+        assert!(body.contains("reader-kindle.js"));
+        assert!(body.contains(&format!("data-url=\"/files/{azw_id}\"")));
+        assert!(!body.contains("暂不支持在线阅读"));
+
+        let response = app
+            .clone()
+            .oneshot(request(&format!("/works/{azw_work}"), true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_text(response).await;
+        assert!(body.contains(&format!("data-reader-url=\"/read/{azw_id}\"")));
+        assert!(body.contains(&format!("href=\"/read/{azw_id}\"")));
 
         let paired_azw = db
             .upsert_file(&NewFile {

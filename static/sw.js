@@ -1,4 +1,4 @@
-const CACHE = 'llibrary-v9';
+const CACHE = 'llibrary-v10';
 const ASSETS = [
   '/static/style.css',
   '/static/manifest.webmanifest',
@@ -12,7 +12,17 @@ const ASSETS = [
   '/static/pdfjs/pdf.min.js',
   '/static/pdfjs/pdf.worker.min.js',
   '/static/reader-pdf.js',
-  '/static/reader-txt.js'
+  '/static/reader-txt.js',
+  '/static/reader-kindle.js',
+  '/static/foliate/view.js',
+  '/static/foliate/mobi.js',
+  '/static/foliate/paginator.js',
+  '/static/foliate/overlayer.js',
+  '/static/foliate/epubcfi.js',
+  '/static/foliate/progress.js',
+  '/static/foliate/text-walker.js',
+  '/static/foliate/fixed-layout.js',
+  '/static/foliate/vendor/fflate.js'
 ];
 
 self.addEventListener('install', (event) => {
