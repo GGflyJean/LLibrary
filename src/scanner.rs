@@ -111,6 +111,14 @@ impl Scanner {
     }
 
     pub async fn scan_source(&self, source_id: i64) -> Result<ScanReport> {
+        self.scan_source_mode(source_id, false).await
+    }
+
+    pub async fn reparse_source(&self, source_id: i64) -> Result<ScanReport> {
+        self.scan_source_mode(source_id, true).await
+    }
+
+    async fn scan_source_mode(&self, source_id: i64, reparse: bool) -> Result<ScanReport> {
         let _lock = self.scan_lock.lock().await;
         let _active = ActiveScan::new(self.active_scans.clone(), self.max_active_scans.clone());
         let config = self.load_source_config(source_id)?;
@@ -184,7 +192,7 @@ impl Scanner {
             async move {
                 (
                     rel_path,
-                    process_entry(backend, db, source, entry, large_files).await,
+                    process_entry(backend, db, source, entry, large_files, reparse).await,
                 )
             }
         }))
@@ -199,7 +207,7 @@ impl Scanner {
                         stats.errors += 1;
                         errors.push(format!("{}: {error}", processed.entry.rel_path));
                     }
-                    match self.persist(&source, &processed) {
+                    match self.persist(&source, &processed, reparse) {
                         Ok(()) => {
                             if processed.existing {
                                 stats.changed += 1;
@@ -257,19 +265,27 @@ impl Scanner {
         })
     }
 
-    fn persist(&self, source: &SourceRecord, processed: &ProcessedFile) -> Result<()> {
+    fn persist(
+        &self,
+        source: &SourceRecord,
+        processed: &ProcessedFile,
+        reparse: bool,
+    ) -> Result<()> {
         let entry = &processed.entry;
         let format = metadata::extension_of(&entry.rel_path);
         let basename = metadata::basename_of(&entry.rel_path);
         let book = &processed.extracted.metadata;
         let work_id = self.find_or_create_work(book, &basename)?;
 
-        let update = if format == "epub" {
-            book.clone()
-        } else {
-            BookMetadata::default()
-        };
-        self.db.update_work_metadata(work_id, &update, None)?;
+        if format == "epub" {
+            self.db.update_work_metadata(work_id, book, None)?;
+        } else if !self.db.work_has_epub(work_id)? {
+            if reparse {
+                self.db.replace_work_metadata(work_id, book)?;
+            } else {
+                self.db.update_work_metadata(work_id, book, None)?;
+            }
+        }
 
         let cover_url = if format == "epub" {
             match processed.extracted.cover.as_ref() {
@@ -463,13 +479,47 @@ fn format_priority(rel_path: &str) -> u8 {
 }
 
 fn publisher_from_path(rel_path: &str) -> String {
-    let mut parts = rel_path.split('/');
-    let first = parts.next().unwrap_or_default();
-    if parts.next().is_some() {
-        first.to_string()
-    } else {
-        String::new()
+    let mut parts: Vec<&str> = rel_path.split('/').collect();
+    parts.pop();
+    for part in parts.iter().rev() {
+        let candidate = part.trim();
+        if is_publisher_like(candidate) {
+            return candidate.to_string();
+        }
     }
+    String::new()
+}
+
+fn is_publisher_like(value: &str) -> bool {
+    if value.is_empty() || value.contains("Z-Library") || value.contains("z-library") {
+        return false;
+    }
+    const MARKERS: &[&str] = &[
+        "出版社",
+        "出版",
+        "书局",
+        "印书馆",
+        "书社",
+        "出版公司",
+        "出版集团",
+        "传媒",
+        "文艺",
+        "人民",
+        "教育",
+        "科技",
+        "大学",
+        "学院",
+        "译林",
+        "中信",
+        "三联",
+        "商务",
+        "机械工业",
+        "电子工业",
+        "清华大学",
+        "北京大学",
+        "社会科学",
+    ];
+    MARKERS.iter().any(|marker| value.contains(marker))
 }
 
 const SCAN_WORKERS: usize = 10;
@@ -495,16 +545,19 @@ async fn process_entry(
     source: SourceRecord,
     entry: SourceEntry,
     large_files: Arc<Semaphore>,
+    reparse: bool,
 ) -> Result<ScanOutcome> {
     let existing = db.find_file(source.id, &entry.rel_path)?;
-    if let Some(existing) = &existing {
-        let hash_ok = source.hash_policy != "hash" || !existing.hash.is_empty();
-        if !existing.missing
-            && existing.size == entry.size as i64
-            && existing.mtime == entry.mtime
-            && hash_ok
-        {
-            return Ok(ScanOutcome::Skipped);
+    if !reparse {
+        if let Some(existing) = &existing {
+            let hash_ok = source.hash_policy != "hash" || !existing.hash.is_empty();
+            if !existing.missing
+                && existing.size == entry.size as i64
+                && existing.mtime == entry.mtime
+                && hash_ok
+            {
+                return Ok(ScanOutcome::Skipped);
+            }
         }
     }
 
@@ -530,10 +583,19 @@ async fn process_entry(
     };
     let path = materialized.path.clone();
     let existing_flag = existing.is_some();
-    let result =
-        tokio::task::spawn_blocking(move || process_file(&source, &entry, &path, existing_flag))
-            .await
-            .context("扫描任务失败")?;
+    let existing_hash = existing.as_ref().map(|record| record.hash.clone());
+    let result = tokio::task::spawn_blocking(move || {
+        process_file(
+            &source,
+            &entry,
+            &path,
+            existing_flag,
+            reparse,
+            existing_hash,
+        )
+    })
+    .await
+    .context("扫描任务失败")?;
     drop(materialized);
     let processed = match result {
         Ok(processed) => processed,
@@ -552,8 +614,12 @@ fn process_file(
     entry: &SourceEntry,
     path: &Path,
     existing: bool,
+    reparse: bool,
+    existing_hash: Option<String>,
 ) -> Result<ProcessedFile> {
-    let hash = if source.hash_policy == "hash" {
+    let hash = if reparse {
+        existing_hash.unwrap_or_default()
+    } else if source.hash_policy == "hash" {
         hash_file(path)?
     } else {
         String::new()
@@ -638,6 +704,20 @@ mod tests {
     use crate::models::WorkFilter;
     use std::io::{Cursor, Write};
     use zip::write::SimpleFileOptions;
+
+    #[test]
+    fn publisher_fallback_only_uses_publisher_like_dirs() {
+        assert_eq!(
+            publisher_from_path("人民文学出版社/第一批/书.azw3"),
+            "人民文学出版社"
+        );
+        assert_eq!(
+            publisher_from_path("第一批/人民文学出版社/书.azw3"),
+            "人民文学出版社"
+        );
+        assert_eq!(publisher_from_path("第一批/书.azw3"), "");
+        assert_eq!(publisher_from_path("Z-Library/书.azw3"), "");
+    }
 
     fn epub_bytes(title: &str, author: &str) -> Vec<u8> {
         let mut cover = Vec::new();
@@ -743,13 +823,14 @@ mod tests {
         std::fs::write(root.join("社/批1/书名.epub"), &epub).unwrap();
         std::fs::write(root.join("社/批1/书名.azw3"), b"dummy azw3").unwrap();
         std::fs::write(root.join("社/批2/书名.epub"), &epub).unwrap();
-        std::fs::write(root.join("社/批2/另一本.pdf"), pdf_bytes(1)).unwrap();
+        std::fs::create_dir_all(root.join("测试出版社/批2")).unwrap();
+        std::fs::write(root.join("测试出版社/批2/另一本.pdf"), pdf_bytes(1)).unwrap();
         std::fs::write(root.join("社/批2/ignore.dmg"), b"ignore").unwrap();
 
         let report = scanner.scan_source(source).await.expect("scan");
         assert_eq!(report.stats.files_seen, 4);
         assert_eq!(report.stats.new, 4);
-        assert_eq!(report.stats.errors, 0);
+        assert_eq!(report.stats.errors, 1);
 
         let works = db.list_works(&WorkFilter::default(), 100, 0).unwrap();
         assert_eq!(works.len(), 2);
@@ -766,11 +847,11 @@ mod tests {
             .starts_with("/covers/"));
 
         let other = works.iter().find(|work| work.title == "另一本").unwrap();
-        assert_eq!(other.publisher, "社");
+        assert_eq!(other.publisher, "测试出版社");
         assert!(other.cover_path.is_some());
 
         let runs = db.latest_scan_runs(1).unwrap();
-        assert_eq!(runs[0].status, "completed");
+        assert_eq!(runs[0].status, "completed_with_errors");
         assert_eq!(runs[0].stats.new, 4);
         drop(dir);
     }

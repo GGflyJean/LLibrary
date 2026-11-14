@@ -1,0 +1,24 @@
+{% if works.is_empty() %}
+<p class="empty">没有找到作品。</p>
+{% else %}
+<div class="grid">
+  {% for work in works %}
+    {% include "_card.html" %}
+  {% endfor %}
+</div>
+{% if total_pages > 1 %}
+<div class="pager">
+  {% if page > 1 %}
+  <button type="button" class="link"
+          hx-get="/category/{{ code }}?publisher={{ publisher|urlencode }}&format={{ format|urlencode }}&source={{ source_id }}&view={{ view_mode }}&page={{ page - 1 }}"
+          hx-target="closest .category-works" hx-swap="innerHTML">上一页</button>
+  {% endif %}
+  <span>第 {{ page }} / {{ total_pages }} 页 · 共 {{ total }} 个作品</span>
+  {% if page < total_pages %}
+  <button type="button" class="link"
+          hx-get="/category/{{ code }}?publisher={{ publisher|urlencode }}&format={{ format|urlencode }}&source={{ source_id }}&view={{ view_mode }}&page={{ page + 1 }}"
+          hx-target="closest .category-works" hx-swap="innerHTML">下一页</button>
+  {% endif %}
+</div>
+{% endif %}
+{% endif %}

@@ -1,5 +1,5 @@
 <a class="card" href="/works/{{ work.id }}">
-  <img src="{{ work.cover_url() }}" alt="" loading="lazy">
+  <img src="{{ work.cover_url() }}" alt="" loading="lazy" decoding="async">
   <div class="card-body">
     <h3>{{ work.title }}</h3>
     <p class="authors">{{ work.authors_label() }}</p>

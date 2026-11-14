@@ -1,4 +1,88 @@
 import '/static/foliate/view.js'
+import { MOBI } from '/static/foliate/mobi.js'
+import { unzlibSync } from '/static/foliate/vendor/fflate.js'
+
+const CHUNK_SIZE = 512 * 1024
+const CACHE_LIMIT = 48
+
+class RemoteSlice {
+  constructor(file, start, end) {
+    this.file = file
+    this.start = start
+    this.end = end
+  }
+  get size() {
+    return Math.max(0, this.end - this.start)
+  }
+  async arrayBuffer() {
+    const data = await this.file.read(this.start, this.end)
+    return data.buffer
+  }
+}
+
+class RemoteFile {
+  constructor(url, size) {
+    this.url = url
+    this.size = size
+    this.cache = new Map()
+    this.full = null
+  }
+  async chunk(index) {
+    const start = index * CHUNK_SIZE
+    const end = Math.min(this.size, start + CHUNK_SIZE)
+    if (this.full) return this.full.subarray(start, end)
+    if (this.cache.has(index)) {
+      const value = this.cache.get(index)
+      this.cache.delete(index)
+      this.cache.set(index, value)
+      return value
+    }
+    if (start >= end) return new Uint8Array(0)
+    const response = await fetch(this.url, {
+      headers: { Range: `bytes=${start}-${end - 1}` },
+    })
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`)
+    let data = new Uint8Array(await response.arrayBuffer())
+    if (response.status !== 206) {
+      if (data.length >= this.size) this.full = data
+      data = data.subarray(start, end)
+    }
+    this.cache.set(index, data)
+    while (this.cache.size > CACHE_LIMIT) {
+      this.cache.delete(this.cache.keys().next().value)
+    }
+    return data
+  }
+  async read(start, end) {
+    const from = Math.max(0, Math.min(this.size, start))
+    const to = Math.max(from, Math.min(this.size, end))
+    const first = Math.floor(from / CHUNK_SIZE)
+    const last = Math.floor((to - 1) / CHUNK_SIZE)
+    const parts = []
+    let total = 0
+    for (let index = first; index <= last; index++) {
+      const chunk = await this.chunk(index)
+      const chunkStart = index * CHUNK_SIZE
+      const partFrom = Math.max(0, from - chunkStart)
+      const partTo = Math.min(chunk.length, to - chunkStart)
+      if (partTo > partFrom) {
+        parts.push(chunk.subarray(partFrom, partTo))
+        total += partTo - partFrom
+      }
+    }
+    if (parts.length === 1) return parts[0].slice()
+    const result = new Uint8Array(total)
+    let offset = 0
+    for (const part of parts) {
+      result.set(part, offset)
+      offset += part.length
+    }
+    return result
+  }
+  slice(start = 0, end = this.size) {
+    return new RemoteSlice(this, start, end)
+  }
+}
 
 const root = document.getElementById('kindle-reader')
 const view = document.getElementById('kindle-view')
@@ -10,16 +94,34 @@ const zoomValue = document.getElementById('reader-zoom-value')
 
 if (root && view) {
   const fileUrl = root.dataset.url
+  const fileSize = Number(root.dataset.size) || 0
   const fileId = root.dataset.fileId || '0'
   const progressKey = 'llibrary:kindle:progress:' + fileId
   const zoomKey = 'llibrary:kindle:zoom'
   let zoom = Number(localStorage.getItem(zoomKey) || 100)
   let ready = false
+  let navigating = false
 
   const setStatus = (text) => {
     if (!status) return
     status.textContent = text || ''
     status.hidden = !text
+  }
+
+  const loadWithStatus = async (action) => {
+    navigating = true
+    setStatus('正在加载…')
+    try {
+      await action()
+    } catch (error) {
+      console.warn(error)
+      setStatus('加载失败：' + (error?.message || error))
+      return
+    }
+    if (navigating) {
+      navigating = false
+      setStatus('')
+    }
   }
 
   const applyZoom = () => {
@@ -46,11 +148,7 @@ if (root && view) {
       link.addEventListener('click', async (event) => {
         event.preventDefault()
         if (tocPanel) tocPanel.hidden = true
-        try {
-          await view.goTo(item.href)
-        } catch (error) {
-          console.warn(error)
-        }
+        await loadWithStatus(() => view.goTo(item.href))
       })
       li.appendChild(link)
       if (item.subitems && item.subitems.length)
@@ -67,18 +165,29 @@ if (root && view) {
       if (percentInput)
         percentInput.value = String(Math.round(location.fraction * 100))
     }
+    if (navigating) {
+      navigating = false
+      setStatus('')
+    }
   })
 
   const main = async () => {
     await customElements.whenDefined('foliate-view')
-    setStatus('正在解析电子书…')
+    setStatus('正在读取电子书…')
     try {
-      await view.open(fileUrl)
+      if (fileSize > 0) {
+        const remote = new RemoteFile(fileUrl, fileSize)
+        const book = await new MOBI({ unzlib: unzlibSync }).open(remote)
+        await view.open(book)
+      } else {
+        await view.open(fileUrl)
+      }
     } catch (error) {
       console.error(error)
       setStatus('无法预览此文件：' + (error?.message || error))
       return
     }
+    setStatus('正在渲染首页…')
 
     const saved = Number(localStorage.getItem(progressKey))
     try {
@@ -113,18 +222,14 @@ if (root && view) {
 
   const prev = document.getElementById('reader-prev')
   const next = document.getElementById('reader-next')
-  if (prev) prev.addEventListener('click', () => view.prev())
-  if (next) next.addEventListener('click', () => view.next())
+  if (prev) prev.addEventListener('click', () => loadWithStatus(() => view.prev()))
+  if (next) next.addEventListener('click', () => loadWithStatus(() => view.next()))
 
   const jump = document.getElementById('reader-jump')
   if (jump) jump.addEventListener('click', async () => {
     if (!ready) return
     const percent = Math.max(0, Math.min(100, Number(percentInput?.value) || 0))
-    try {
-      await view.goToFraction(percent / 100)
-    } catch (error) {
-      console.warn(error)
-    }
+    await loadWithStatus(() => view.goToFraction(percent / 100))
   })
 
   const zoomOut = document.getElementById('reader-zoom-out')

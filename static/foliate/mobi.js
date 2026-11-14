@@ -1001,9 +1001,11 @@ class KF8 {
             return arr.concat({ skel, frags, fragEnd, length, totalLength })
         }, [])
 
-        const resources = await this.getResourcesByMagic(['RESC', 'PAGE'])
         const pageSpreads = new Map()
-        if (resources.RESC) {
+        const fixedLayout = this.mobi.headers.exth?.fixedLayout === 'true'
+        const loadPageSpreads = async () => {
+            const resources = await this.getResourcesByMagic(['RESC', 'PAGE'])
+            if (!resources.RESC) return
             const buf = await this.mobi.loadRecord(resources.RESC)
             const str = this.mobi.decode(buf.slice(16)).replace(/\0/g, '')
             // the RESC record lacks the root `<package>` element
@@ -1017,6 +1019,7 @@ class KF8 {
                     $itemref.getAttribute('properties')?.split(' ') ?? []))
             }
         }
+        if (fixedLayout) await loadPageSpreads()
 
         this.sections = this.#sections.map((section, index) =>
             section.frags.length ? ({
@@ -1026,6 +1029,7 @@ class KF8 {
                 size: section.length,
                 pageSpread: pageSpreads.get(index),
             }) : ({ linear: 'no' }))
+
 
         try {
             const ncx = await this.mobi.getNCX()

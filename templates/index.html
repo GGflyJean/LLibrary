@@ -6,6 +6,9 @@
       hx-trigger="submit, keyup changed delay:400ms from:input[name=q]">
   <input type="search" name="q" placeholder="搜索书名、作者、出版社、ISBN" value="{{ query }}">
   <input type="hidden" name="view" value="{{ view_mode }}">
+  <input type="hidden" name="publisher" value="{{ publisher }}">
+  <input type="hidden" name="format" value="{{ format }}">
+  <input type="hidden" name="source" value="{{ source_id }}">
   <button type="submit">搜索</button>
 </form>
 {% endblock %}
@@ -14,31 +17,41 @@
 <div class="banner">正在扫描 {{ scan_source }}：{{ scan_phase }} {{ scan_processed }}/{{ scan_total }}</div>
 {% endif %}
 <div class="filters">
+  <span class="filters-label">筛选</span>
   <form method="get" action="/" class="filter-form">
     <input type="hidden" name="q" value="{{ query }}">
     <input type="hidden" name="view" value="{{ view_mode }}">
-    <select name="publisher" onchange="this.form.submit()">
-      <option value="">全部出版社</option>
-      {% for item in publishers %}
-      <option value="{{ item }}" {% if item.as_str() == publisher.as_str() %}selected{% endif %}>{{ item }}</option>
-      {% endfor %}
-    </select>
-    <select name="format" onchange="this.form.submit()">
-      <option value="">全部格式</option>
-      {% for item in formats %}
-      <option value="{{ item }}" {% if item.as_str() == format.as_str() %}selected{% endif %}>{{ item }}</option>
-      {% endfor %}
-    </select>
-    <select name="source" onchange="this.form.submit()">
-      <option value="">全部来源</option>
-      {% for item in source_options %}
-      <option value="{{ item.id }}" {% if item.selected %}selected{% endif %}>{{ item.name }}</option>
-      {% endfor %}
-    </select>
+    <label class="filter-field">
+      <span>出版社</span>
+      <select name="publisher" class="filter-select" title="{{ publisher }}" onchange="this.form.submit()">
+        <option value="">全部出版社</option>
+        {% for item in publishers %}
+        <option value="{{ item }}" {% if item.as_str() == publisher.as_str() %}selected{% endif %}>{{ item }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="filter-field">
+      <span>格式</span>
+      <select name="format" class="filter-select" onchange="this.form.submit()">
+        <option value="">全部格式</option>
+        {% for item in formats %}
+        <option value="{{ item }}" {% if item.as_str() == format.as_str() %}selected{% endif %}>{{ item }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="filter-field">
+      <span>来源</span>
+      <select name="source" class="filter-select" onchange="this.form.submit()">
+        <option value="">全部来源</option>
+        {% for item in source_options %}
+        <option value="{{ item.id }}" {% if item.selected %}selected{% endif %}>{{ item.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
   </form>
   <span class="view-toggle" role="group" aria-label="显示方式">
-    <a class="{% if !compact %}active{% endif %}" href="?q={{ query }}&publisher={{ publisher }}&format={{ format }}&source={{ source_id }}&view=detail">详情</a>
-    <a class="{% if compact %}active{% endif %}" href="?q={{ query }}&publisher={{ publisher }}&format={{ format }}&source={{ source_id }}&view=compact">简洁</a>
+    <button type="button" class="{% if !compact %}active{% endif %}" onclick="llibrarySwitchView('detail')">详情</button>
+    <button type="button" class="{% if compact %}active{% endif %}" onclick="llibrarySwitchView('compact')">简洁</button>
   </span>
 </div>
 <div id="results" class="{% if compact %}compact-view{% endif %}">
@@ -50,16 +63,16 @@
   {% if works.is_empty() %}
     <p class="empty">没有找到作品。</p>
   {% else %}
-    <p class="muted"><a href="?q={{ query }}&publisher={{ publisher }}&format={{ format }}&source={{ source_id }}&view={{ view_mode }}">← 分类浏览</a></p>
+    <p class="muted"><a href="?q={{ query|urlencode }}&publisher={{ publisher|urlencode }}&format={{ format|urlencode }}&source={{ source_id }}&view={{ view_mode }}">← 分类浏览</a></p>
     <div class="grid">
     {% for work in works %}
       {% include "_card.html" %}
     {% endfor %}
     </div>
     <div class="pager">
-      {% if prev_page > 0 %}<a href="?q={{ query }}&publisher={{ publisher }}&format={{ format }}&source={{ source_id }}&view={{ view_mode }}&page={{ prev_page }}">上一页</a>{% endif %}
+      {% if prev_page > 0 %}<a href="?q={{ query|urlencode }}&publisher={{ publisher|urlencode }}&format={{ format|urlencode }}&source={{ source_id }}&view={{ view_mode }}&page={{ prev_page }}">上一页</a>{% endif %}
       <span>第 {{ page }} / {{ total_pages }} 页</span>
-      {% if next_page > 0 %}<a href="?q={{ query }}&publisher={{ publisher }}&format={{ format }}&source={{ source_id }}&view={{ view_mode }}&page={{ next_page }}">下一页</a>{% endif %}
+      {% if next_page > 0 %}<a href="?q={{ query|urlencode }}&publisher={{ publisher|urlencode }}&format={{ format|urlencode }}&source={{ source_id }}&view={{ view_mode }}&page={{ next_page }}">下一页</a>{% endif %}
     </div>
   {% endif %}
 {% else %}
@@ -67,16 +80,16 @@
     <p class="empty">没有找到作品。</p>
   {% else %}
     {% for top in tree %}
-    <details class="clc-level1" {% if compact %}open{% endif %}>
+    <details class="clc-level1">
       <summary><span class="clc-code">{{ top.code }}</span> {{ top.label }} <span class="muted">({{ top.count }})</span></summary>
       {% for group in top.children %}
-      <details class="clc-level2" {% if compact %}open{% endif %}>
+      <details class="clc-level2"
+               hx-get="/category/{{ group.code }}?publisher={{ publisher|urlencode }}&format={{ format|urlencode }}&source={{ source_id }}&view={{ view_mode }}"
+               hx-trigger="toggle once"
+               hx-target="find .category-works"
+               hx-swap="innerHTML">
         <summary><span class="clc-code">{{ group.code }}</span> {{ group.label }} <span class="muted">({{ group.count }})</span></summary>
-        <div class="grid">
-          {% for work in group.works %}
-            {% include "_card.html" %}
-          {% endfor %}
-        </div>
+        <div class="category-works"><p class="muted category-loading">展开后加载作品…</p></div>
       </details>
       {% endfor %}
     </details>
@@ -84,4 +97,17 @@
   {% endif %}
 {% endif %}
 </div>
+<script>
+  function llibrarySwitchView(view) {
+    const params = new URLSearchParams();
+    const q = document.querySelector('input[name="q"]');
+    if (q && q.value.trim()) params.set('q', q.value.trim());
+    for (const name of ['publisher', 'format', 'source']) {
+      const field = document.querySelector('.filter-form [name="' + name + '"]');
+      if (field && field.value) params.set(name, field.value);
+    }
+    params.set('view', view);
+    window.location.search = params.toString();
+  }
+</script>
 {% endblock %}

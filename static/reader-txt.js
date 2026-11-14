@@ -12,6 +12,7 @@
   const zoomOut = document.getElementById('txt-zoom-out');
   const zoomIn = document.getElementById('txt-zoom-in');
   const zoomValue = document.getElementById('txt-zoom-value');
+  const status = document.getElementById('txt-status');
 
   let page = 1;
   let pages = 1;
@@ -59,9 +60,14 @@
       const response = await fetch(url, { credentials: 'same-origin' });
       if (!response.ok) throw new Error('HTTP ' + response.status);
       content.textContent = await response.text();
+      if (status) status.hidden = true;
       layout(true);
     } catch (error) {
       content.textContent = '文本加载失败：' + error.message;
+      if (status) {
+        status.hidden = false;
+        status.textContent = '文本加载失败：' + error.message;
+      }
     }
   }
 

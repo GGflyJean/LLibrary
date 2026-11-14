@@ -267,4 +267,5 @@ pub struct WorkFilter {
     pub publisher: Option<String>,
     pub format: Option<String>,
     pub source_id: Option<i64>,
+    pub clc_code: Option<String>,
 }

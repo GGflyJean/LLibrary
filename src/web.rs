@@ -32,6 +32,7 @@ use crate::scanner::ScannerHandle;
 use crate::sources::SourceBackend;
 
 const PER_PAGE: i64 = 40;
+const PER_CATEGORY: i64 = 60;
 const COVER_CACHE: &str = "private, max-age=86400";
 
 #[derive(Clone)]
@@ -73,6 +74,20 @@ struct IndexTemplate {
 }
 
 #[derive(Template)]
+#[template(path = "category.html")]
+struct CategoryTemplate {
+    works: Vec<WorkSummary>,
+    code: String,
+    total: i64,
+    page: i64,
+    total_pages: i64,
+    publisher: String,
+    format: String,
+    source_id: i64,
+    view_mode: String,
+}
+
+#[derive(Template)]
 #[template(path = "detail.html")]
 struct DetailTemplate {
     work: WorkSummary,
@@ -98,6 +113,7 @@ struct ReaderTemplate {
     has_toc: bool,
     supported: bool,
     page_count: i64,
+    file_size: i64,
     message: String,
 }
 
@@ -163,7 +179,6 @@ struct ClcGroup {
 struct ClcWorkGroup {
     code: String,
     label: String,
-    works: Vec<WorkSummary>,
     count: usize,
 }
 
@@ -226,6 +241,20 @@ struct IndexQuery {
 }
 
 #[derive(Debug, Deserialize)]
+struct CategoryQuery {
+    publisher: Option<String>,
+    format: Option<String>,
+    source: Option<String>,
+    page: Option<String>,
+    view: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FileQuery {
+    download: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct LoginQuery {
     next: Option<String>,
 }
@@ -246,6 +275,7 @@ pub fn router(state: AppState) -> Router {
     let static_dir = state.static_dir.clone();
     Router::new()
         .route("/", get(index))
+        .route("/category/{code}", get(category_works))
         .route("/works/{id}", get(detail))
         .route("/works/{id}/classify", post(classify_work))
         .route("/read/{id}", get(read_file))
@@ -304,6 +334,7 @@ async fn index(
         publisher: clean(query.publisher),
         format: clean(query.format),
         source_id,
+        clc_code: None,
     };
     let flat = filter.query.is_some();
     let db = state.db.clone();
@@ -387,6 +418,65 @@ async fn index(
             .unwrap_or(0),
     };
     render(template)
+}
+
+async fn category_works(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(code): Path<String>,
+    Query(query): Query<CategoryQuery>,
+) -> Response {
+    if let Some(response) = require_web(&state, &headers) {
+        return response;
+    }
+    let page = query
+        .page
+        .as_deref()
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(1)
+        .max(1);
+    let source_id = query
+        .source
+        .as_deref()
+        .and_then(|value| value.parse::<i64>().ok())
+        .filter(|value| *value > 0);
+    let view_mode = if query.view.as_deref() == Some("compact") {
+        "compact".to_string()
+    } else {
+        "detail".to_string()
+    };
+    let filter = WorkFilter {
+        query: None,
+        publisher: clean(query.publisher),
+        format: clean(query.format),
+        source_id,
+        clc_code: Some(code.clone()),
+    };
+    let publisher = filter.publisher.clone().unwrap_or_default();
+    let format = filter.format.clone().unwrap_or_default();
+    let db = state.db.clone();
+    let result = blocking(move || {
+        let total = db.count_works(&filter)?;
+        let works = db.list_works(&filter, PER_CATEGORY, (page - 1) * PER_CATEGORY)?;
+        Ok((works, total))
+    })
+    .await;
+    let (works, total) = match result {
+        Ok(value) => value,
+        Err(error) => return internal(error),
+    };
+    let total_pages = ((total + PER_CATEGORY - 1) / PER_CATEGORY).max(1);
+    render(CategoryTemplate {
+        works,
+        code,
+        total,
+        page,
+        total_pages,
+        publisher,
+        format,
+        source_id: source_id.unwrap_or(0),
+        view_mode,
+    })
 }
 
 async fn detail(
@@ -537,7 +627,8 @@ async fn read_file(
         return not_found();
     }
     let format = record.format.to_ascii_lowercase();
-    let download_url = format!("/files/{}", record.id);
+    let download_url = format!("/files/{}?download=1", record.id);
+    let file_url = format!("/files/{}", record.id);
     let back_url = format!("/works/{}", record.work_id);
 
     if format == "txt" {
@@ -550,7 +641,7 @@ async fn read_file(
         return render(ReaderTemplate {
             title,
             file_id: record.id,
-            file_url: download_url.clone(),
+            file_url: file_url.clone(),
             download_url,
             back_url,
             is_epub: false,
@@ -561,6 +652,7 @@ async fn read_file(
             has_toc: false,
             supported: true,
             page_count: 0,
+            file_size: record.size,
             message: String::new(),
         });
     }
@@ -578,7 +670,7 @@ async fn read_file(
         return render(ReaderTemplate {
             title: record.basename.clone(),
             file_id: record.id,
-            file_url: download_url.clone(),
+            file_url: file_url.clone(),
             download_url,
             back_url,
             is_epub: false,
@@ -589,6 +681,7 @@ async fn read_file(
             has_toc: true,
             supported: true,
             page_count: 0,
+            file_size: record.size,
             message: String::new(),
         });
     }
@@ -622,6 +715,7 @@ async fn read_file(
         has_toc: format == "epub" || format == "pdf",
         supported: true,
         page_count: record.page_count.max(1),
+        file_size: record.size,
         message: String::new(),
     })
 }
@@ -661,7 +755,12 @@ async fn cover(
     }
 }
 
-async fn file(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<i64>) -> Response {
+async fn file(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Query(query): Query<FileQuery>,
+) -> Response {
     if let Some(response) = require_api(&state, &headers) {
         return response;
     }
@@ -776,8 +875,13 @@ async fn file(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<
         header::CACHE_CONTROL,
         HeaderValue::from_static("private, max-age=3600"),
     );
+    let disposition_type = if query.download.is_some() {
+        "attachment"
+    } else {
+        "inline"
+    };
     let disposition = format!(
-        "inline; filename*=UTF-8''{}",
+        "{disposition_type}; filename*=UTF-8''{}",
         utf8_percent_encode(&filename, NON_ALPHANUMERIC)
     );
     if let Ok(value) = HeaderValue::from_str(&disposition) {
@@ -1432,7 +1536,7 @@ fn opds_response(xml: String, kind: &str) -> Response {
 }
 
 fn build_clc_tree(works: Vec<WorkSummary>) -> Vec<ClcTopGroup> {
-    let mut map: BTreeMap<String, BTreeMap<String, Vec<WorkSummary>>> = BTreeMap::new();
+    let mut map: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
     for work in works {
         let raw = work.clc_code.trim();
         let (top_key, level2_key) = if raw.is_empty() || raw == crate::clc::UNCLASSIFIED_CODE {
@@ -1441,11 +1545,10 @@ fn build_clc_tree(works: Vec<WorkSummary>) -> Vec<ClcTopGroup> {
             let top = raw.chars().next().unwrap_or('~').to_string();
             (top, raw.to_string())
         };
-        map.entry(top_key)
+        *map.entry(top_key)
             .or_default()
             .entry(level2_key)
-            .or_default()
-            .push(work);
+            .or_default() += 1;
     }
 
     let mut groups = Vec::new();
@@ -1456,28 +1559,21 @@ fn build_clc_tree(works: Vec<WorkSummary>) -> Vec<ClcTopGroup> {
             crate::clc::level1_label(&top_key).to_string()
         };
         let mut children = Vec::new();
-        for (code, works) in children_map {
+        for (code, count) in children_map {
             let label = if code == "~" {
                 "未分类".to_string()
             } else {
-                works
-                    .first()
-                    .map(|work| {
-                        if work.clc_label.is_empty() {
-                            crate::clc::level2_label(&code)
-                                .unwrap_or(code.as_str())
-                                .to_string()
-                        } else {
-                            work.clc_label.clone()
-                        }
-                    })
-                    .unwrap_or_else(|| code.clone())
+                crate::clc::level2_label(&code)
+                    .unwrap_or(code.as_str())
+                    .to_string()
             };
-            let count = works.len();
             children.push(ClcWorkGroup {
-                code: if code == "~" { String::new() } else { code },
+                code: if code == "~" {
+                    crate::clc::UNCLASSIFIED_CODE.to_string()
+                } else {
+                    code
+                },
                 label,
-                works,
                 count,
             });
         }
@@ -1640,9 +1736,17 @@ mod tests {
         let response = app.clone().oneshot(request("/", true)).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         let body = body_text(response).await;
-        assert!(body.contains("论语译注"));
+        assert!(body.contains("category-works"));
         assert!(body.contains("中华书局"));
-        assert!(body.contains("view=compact"));
+        assert!(body.contains("llibrarySwitchView('compact')"));
+
+        let response = app
+            .clone()
+            .oneshot(request("/category/-", true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(body_text(response).await.contains("论语译注"));
 
         let response = app
             .clone()
@@ -1665,6 +1769,14 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+        assert!(body_text(response).await.contains("category-works"));
+
+        let response = app
+            .clone()
+            .oneshot(request("/category/-?source=1", true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
         assert!(body_text(response).await.contains("论语译注"));
 
         let response = app
@@ -1673,7 +1785,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        assert!(body_text(response).await.contains("论语译注"));
+        assert!(body_text(response).await.contains("category-works"));
 
         let response = app
             .clone()
@@ -1797,6 +1909,20 @@ mod tests {
             "bytes"
         );
         assert_eq!(body_text(response).await, "0123456789");
+
+        let response = app
+            .clone()
+            .oneshot(request(&format!("/files/{file}?download=1"), true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response
+            .headers()
+            .get(header::CONTENT_DISPOSITION)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with("attachment;"));
 
         let response = app
             .clone()
@@ -1990,8 +2116,24 @@ mod tests {
         assert!(body.contains("clc-level1"));
         assert!(body.contains("中国文学"));
         assert!(body.contains("中国史"));
-        assert!(body.contains("论语译注"));
-        assert!(body.contains("中国通史"));
+        assert!(body.contains("category/I2"));
+        assert!(body.contains("category/K2"));
+
+        let response = app
+            .clone()
+            .oneshot(request("/category/I2", true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(body_text(response).await.contains("论语译注"));
+
+        let response = app
+            .clone()
+            .oneshot(request("/category/K2", true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(body_text(response).await.contains("中国通史"));
 
         let response = app
             .clone()
@@ -2011,8 +2153,9 @@ mod tests {
         let body = body_text(response).await;
         assert!(body.contains("compact-view"));
         assert!(body.contains("共 2 个作品"));
-        assert!(body.contains("论语译注"));
+        assert!(!body.contains("论语译注"));
         assert!(body.contains("clc-level1"));
+        assert!(!body.contains("clc-level2\" open"));
     }
 
     #[tokio::test]

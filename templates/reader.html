@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ title }}</title>
-  <link rel="stylesheet" href="/static/reader.css?v=10">
+  <link rel="stylesheet" href="/static/reader.css?v=12">
 </head>
 <body class="reader-page" data-back-url="{{ back_url }}">
   <header class="reader-header">
@@ -87,7 +87,10 @@
   {% endif %}
 
   {% if is_epub %}
-  <div id="viewer" data-url="{{ file_url }}" data-file-id="{{ file_id }}"></div>
+  <div class="kindle-reader">
+    <div id="viewer" data-url="{{ file_url }}" data-file-id="{{ file_id }}"></div>
+    <div id="epub-status" class="kindle-status">正在加载 EPUB…</div>
+  </div>
   <script src="/static/epubjs/jszip.min.js"></script>
   <script src="/static/epubjs/epub.min.js"></script>
   <script>
@@ -103,7 +106,15 @@
         spread: 'none'
       });
       const saved = localStorage.getItem(key);
-      rendition.display(saved || undefined);
+      const status = document.getElementById('epub-status');
+      rendition.display(saved || undefined).then(function () {
+        if (status) status.hidden = true;
+      }).catch(function (error) {
+        if (status) {
+          status.hidden = false;
+          status.textContent = 'EPUB 加载失败：' + (error && error.message ? error.message : error);
+        }
+      });
 
       const zoomKey = 'llibrary:zoom';
       const zoomValue = document.getElementById('reader-zoom-value');
@@ -233,22 +244,23 @@
     <div id="pdf-status" class="pdf-status">正在加载 PDF…</div>
   </div>
   <script src="/static/pdfjs/pdf.min.js"></script>
-  <script src="/static/reader-pdf.js?v=10"></script>
+  <script src="/static/reader-pdf.js?v=12"></script>
   {% endif %}
 
   {% if is_txt %}
   <div id="txt-reader" class="txt-reader" data-url="{{ text_url }}">
     <div id="txt-viewport" class="txt-viewport"><div id="txt-content" class="txt-content"></div></div>
+    <div id="txt-status" class="kindle-status">正在加载文本…</div>
   </div>
-  <script src="/static/reader-txt.js?v=10"></script>
+  <script src="/static/reader-txt.js?v=12"></script>
   {% endif %}
 
   {% if is_kindle %}
-  <div id="kindle-reader" class="kindle-reader" data-url="{{ file_url }}" data-file-id="{{ file_id }}">
+  <div id="kindle-reader" class="kindle-reader" data-url="{{ file_url }}" data-file-id="{{ file_id }}" data-size="{{ file_size }}">
     <foliate-view id="kindle-view"></foliate-view>
     <div id="kindle-status" class="kindle-status">正在加载电子书…</div>
   </div>
-  <script type="module" src="/static/reader-kindle.js?v=10"></script>
+  <script type="module" src="/static/reader-kindle.js?v=12"></script>
   {% endif %}
 
   {% if !supported %}

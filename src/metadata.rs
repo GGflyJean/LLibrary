@@ -29,6 +29,7 @@ pub struct PdfInfo {
     pub page_count: i64,
     pub title: String,
     pub authors: String,
+    pub publisher: String,
 }
 
 pub fn extension_of(rel_path: &str) -> String {
@@ -56,6 +57,7 @@ pub fn extract(format: &str, bytes: &[u8], rel_path: &str) -> Result<Extracted> 
     match format {
         "epub" => parse_epub(bytes),
         "pdf" => Ok(pdf_extracted(parse_pdf(bytes)?, rel_path)),
+        "azw3" | "azw" | "mobi" => parse_mobi_bytes(bytes),
         _ => {
             let fallback = parse_filename(rel_path);
             Ok(Extracted {
@@ -71,6 +73,7 @@ pub fn extract_from_path(format: &str, path: &Path, rel_path: &str) -> Result<Ex
     match format {
         "epub" => parse_epub_path(path),
         "pdf" => Ok(pdf_extracted(parse_pdf_file(path)?, rel_path)),
+        "azw3" | "azw" | "mobi" => parse_mobi_path(path),
         _ => {
             let fallback = parse_filename(rel_path);
             Ok(Extracted {
@@ -84,22 +87,24 @@ pub fn extract_from_path(format: &str, path: &Path, rel_path: &str) -> Result<Ex
 
 fn pdf_extracted(info: PdfInfo, rel_path: &str) -> Extracted {
     let fallback = parse_filename(rel_path);
-    let title = if fallback.title.trim().is_empty() {
-        info.title
+    let fallback_title = repair_mojibake(&fallback.title);
+    let title = if fallback_title.trim().is_empty() || fallback_title.contains('\u{FFFD}') {
+        repair_mojibake(&info.title)
     } else {
-        fallback.title.clone()
+        fallback_title
     };
     let authors = if !fallback.author.trim().is_empty() {
-        fallback.author.clone()
+        repair_mojibake(&fallback.author)
     } else if is_generic_pdf_author(&info.authors) {
         String::new()
     } else {
-        info.authors
+        repair_mojibake(&info.authors)
     };
     Extracted {
         metadata: BookMetadata {
             title,
             authors,
+            publisher: info.publisher.trim().to_string(),
             ..Default::default()
         },
         cover: None,
@@ -113,6 +118,93 @@ fn fallback_metadata(info: &FilenameInfo) -> BookMetadata {
         authors: info.author.clone(),
         ..Default::default()
     }
+}
+
+fn parse_mobi_path(path: &Path) -> Result<Extracted> {
+    let metadata = mobi::MobiMetadata::from_path(path)
+        .with_context(|| format!("无法解析 MOBI/AZW3 元数据: {}", path.display()))?;
+    Ok(mobi_extracted(&metadata))
+}
+
+fn parse_mobi_bytes(bytes: &[u8]) -> Result<Extracted> {
+    let mut cursor = Cursor::new(bytes);
+    let metadata =
+        mobi::MobiMetadata::from_read(&mut cursor).context("无法解析 MOBI/AZW3 元数据")?;
+    Ok(mobi_extracted(&metadata))
+}
+
+fn mobi_extracted(metadata: &mobi::MobiMetadata) -> Extracted {
+    let title = repair_mojibake(&metadata.title()).trim().to_string();
+    let authors = metadata
+        .author()
+        .map(|value| clean_author(&repair_mojibake(&value)))
+        .unwrap_or_default();
+    let publisher = metadata
+        .publisher()
+        .map(|value| repair_mojibake(&value).trim().to_string())
+        .unwrap_or_default();
+    let description = metadata
+        .description()
+        .map(|value| repair_mojibake(&value).trim().to_string())
+        .unwrap_or_default();
+    let isbn = metadata
+        .isbn()
+        .and_then(|value| {
+            extract_isbn(&value).or_else(|| {
+                let trimmed = value.trim().to_string();
+                (!trimmed.is_empty()).then_some(trimmed)
+            })
+        })
+        .unwrap_or_default();
+    let pub_date = metadata
+        .publish_date()
+        .map(|value| value.trim().to_string())
+        .unwrap_or_default();
+    Extracted {
+        metadata: BookMetadata {
+            title,
+            authors,
+            publisher,
+            isbn,
+            description,
+            language: mobi_language(metadata.language()),
+            pub_date,
+        },
+        cover: None,
+        page_count: 0,
+    }
+}
+
+fn mobi_language(language: mobi::headers::Language) -> String {
+    use mobi::headers::Language;
+    match language {
+        Language::Chinese => "zh",
+        Language::English => "en",
+        Language::Japanese => "ja",
+        Language::Korean => "ko",
+        Language::French => "fr",
+        Language::German => "de",
+        Language::Spanish => "es",
+        Language::Russian => "ru",
+        _ => "",
+    }
+    .to_string()
+}
+
+fn repair_mojibake(value: &str) -> String {
+    if value.chars().any(|character| character as u32 > 0xFF) {
+        return value.to_string();
+    }
+    let bytes: Vec<u8> = value.chars().map(|character| character as u8).collect();
+    if let Ok(decoded) = std::str::from_utf8(&bytes) {
+        if decoded
+            .chars()
+            .any(|character| matches!(character as u32, 0x3400..=0x9FFF | 0xF900..=0xFAFF))
+        {
+            return decoded.to_string();
+        }
+    }
+    value.to_string()
 }
 
 pub fn parse_epub(bytes: &[u8]) -> Result<Extracted> {
@@ -169,8 +261,46 @@ fn read_zip_entry<R: Read + std::io::Seek>(
     Ok(data)
 }
 
+fn decode_xml(xml: &[u8]) -> String {
+    if let Some((encoding, bom_len)) = encoding_rs::Encoding::for_bom(xml) {
+        let (text, _, _) = encoding.decode(&xml[bom_len..]);
+        return text.into_owned();
+    }
+    if let Some(label) = sniff_xml_encoding(xml) {
+        if let Some(encoding) = encoding_rs::Encoding::for_label(label.as_bytes()) {
+            let (text, _, _) = encoding.decode(xml);
+            return text.into_owned();
+        }
+    }
+    if let Ok(text) = std::str::from_utf8(xml) {
+        return text.to_string();
+    }
+    let (text, _, had_errors) = encoding_rs::GB18030.decode(xml);
+    if !had_errors {
+        return text.into_owned();
+    }
+    let (text, _, _) = encoding_rs::BIG5.decode(xml);
+    text.into_owned()
+}
+
+fn sniff_xml_encoding(xml: &[u8]) -> Option<String> {
+    let head = &xml[..xml.len().min(256)];
+    let text = String::from_utf8_lossy(head);
+    let lower = text.to_ascii_lowercase();
+    let index = lower.find("encoding")?;
+    let rest = text[index + "encoding".len()..].trim_start();
+    let rest = rest.strip_prefix('=')?.trim_start();
+    let quote = rest.chars().next()?;
+    if quote != '"' && quote != '\'' {
+        return None;
+    }
+    let rest = &rest[quote.len_utf8()..];
+    let end = rest.find(quote)?;
+    Some(rest[..end].to_string())
+}
+
 fn parse_container(xml: &[u8]) -> Result<String> {
-    let text = String::from_utf8_lossy(xml);
+    let text = decode_xml(xml);
     let mut reader = Reader::from_str(&text);
     reader.config_mut().trim_text(true);
     loop {
@@ -207,7 +337,7 @@ struct OpfParsed {
 }
 
 fn parse_opf(xml: &[u8]) -> Result<OpfParsed> {
-    let text = String::from_utf8_lossy(xml);
+    let text = decode_xml(xml);
     let mut reader = Reader::from_str(&text);
     reader.config_mut().trim_text(true);
 
@@ -406,11 +536,12 @@ fn is_generic_pdf_author(value: &str) -> bool {
 pub fn parse_pdf(bytes: &[u8]) -> Result<PdfInfo> {
     let document = lopdf::Document::load_mem(bytes).context("无法解析 PDF")?;
     let page_count = document.get_pages().len() as i64;
-    let (title, authors) = pdf_metadata(&document);
+    let (title, authors, publisher) = pdf_metadata(&document);
     Ok(PdfInfo {
         page_count,
         title,
         authors,
+        publisher,
     })
 }
 
@@ -435,15 +566,16 @@ pub fn parse_pdf_file(path: &Path) -> Result<PdfInfo> {
     }
     let document = lopdf::Document::load(path).context("无法解析 PDF")?;
     let page_count = document.get_pages().len() as i64;
-    let (title, authors) = pdf_metadata(&document);
+    let (title, authors, publisher) = pdf_metadata(&document);
     Ok(PdfInfo {
         page_count,
         title,
         authors,
+        publisher,
     })
 }
 
-fn pdf_metadata(document: &lopdf::Document) -> (String, String) {
+fn pdf_metadata(document: &lopdf::Document) -> (String, String, String) {
     let info = document
         .trailer
         .get(b"Info")
@@ -457,25 +589,25 @@ fn pdf_metadata(document: &lopdf::Document) -> (String, String) {
             _ => None,
         });
     let Some(dictionary) = info else {
-        return (String::new(), String::new());
+        return (String::new(), String::new(), String::new());
     };
-    let title = dictionary
-        .get(b"Title")
-        .ok()
-        .and_then(|object| object.as_str().ok())
-        .map(|bytes| String::from_utf8_lossy(bytes).to_string())
-        .unwrap_or_default();
-    let authors = dictionary
-        .get(b"Author")
-        .ok()
-        .and_then(|object| object.as_str().ok())
-        .map(|bytes| String::from_utf8_lossy(bytes).to_string())
-        .unwrap_or_default();
-    (title.trim().to_string(), authors.trim().to_string())
+    let value = |key: &[u8]| {
+        dictionary
+            .get(key)
+            .ok()
+            .and_then(|object| object.as_str().ok())
+            .map(|bytes| String::from_utf8_lossy(bytes).to_string())
+            .unwrap_or_default()
+    };
+    (
+        value(b"Title").trim().to_string(),
+        value(b"Author").trim().to_string(),
+        value(b"Publisher").trim().to_string(),
+    )
 }
 
 pub fn parse_filename(rel_path: &str) -> FilenameInfo {
-    let mut stem = basename_of(rel_path);
+    let mut stem = repair_mojibake(&basename_of(rel_path));
     loop {
         let trimmed = stem.trim();
         let (open, close) = match (trimmed.rfind('('), trimmed.rfind('（')) {
@@ -512,13 +644,16 @@ pub fn parse_filename(rel_path: &str) -> FilenameInfo {
         .to_string();
     if stem.is_empty() {
         return FilenameInfo {
-            title: basename_of(rel_path),
+            title: repair_mojibake(&basename_of(rel_path)),
             author: String::new(),
         };
     }
 
     if let Some((title, author)) = split_author(&stem) {
-        return FilenameInfo { title, author };
+        return FilenameInfo {
+            title: repair_mojibake(&title),
+            author: repair_mojibake(&author),
+        };
     }
     FilenameInfo {
         title: stem,
@@ -753,6 +888,7 @@ mod tests {
         let info_id = document.add_object(dictionary! {
             "Title" => lopdf::Object::string_literal("ebook67-1"),
             "Author" => lopdf::Object::string_literal("China-pub.com"),
+            "Publisher" => lopdf::Object::string_literal("测试出版社"),
         });
         document.trailer.set("Info", info_id);
         let mut output = Vec::new();
@@ -773,10 +909,45 @@ mod tests {
     }
 
     #[test]
+    fn parses_gbk_encoded_opf() {
+        let cursor = Cursor::new(Vec::new());
+        let mut zip = zip::ZipWriter::new(cursor);
+        let options = SimpleFileOptions::default();
+        zip.start_file("META-INF/container.xml", options).unwrap();
+        zip.write_all(
+            br#"<?xml version="1.0"?>
+<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles>
+</container>"#,
+        )
+        .unwrap();
+        zip.start_file("OEBPS/content.opf", options).unwrap();
+        let opf = r#"<?xml version="1.0" encoding="gbk"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>中文书名</dc:title>
+    <dc:creator>作者</dc:creator>
+    <dc:publisher>出版社</dc:publisher>
+    <dc:language>zh</dc:language>
+  </metadata>
+  <manifest/>
+  <spine/>
+</package>"#;
+        let (encoded, _, _) = encoding_rs::GBK.encode(opf);
+        zip.write_all(&encoded).unwrap();
+        let bytes = zip.finish().unwrap().into_inner();
+        let extracted = parse_epub(&bytes).expect("epub");
+        assert_eq!(extracted.metadata.title, "中文书名");
+        assert_eq!(extracted.metadata.authors, "作者");
+        assert_eq!(extracted.metadata.publisher, "出版社");
+    }
+
+    #[test]
     fn parses_pdf_page_count() {
         let bytes = make_pdf();
         let info = parse_pdf(&bytes).expect("pdf");
         assert_eq!(info.page_count, 1);
+        assert_eq!(info.publisher, "测试出版社");
     }
 
     #[test]
@@ -848,6 +1019,19 @@ mod tests {
             assert_eq!(info.title, title, "title for {input}");
             assert_eq!(info.author, author, "author for {input}");
         }
+    }
+
+    #[test]
+    fn repairs_mojibake_filename() {
+        let original = "机器学习 (周志华).azw3";
+        let broken: String = original
+            .as_bytes()
+            .iter()
+            .map(|byte| *byte as char)
+            .collect();
+        let info = parse_filename(&broken);
+        assert_eq!(info.title, "机器学习");
+        assert_eq!(info.author, "周志华");
     }
 
     #[test]

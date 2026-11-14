@@ -135,6 +135,7 @@ impl Db {
             CREATE INDEX IF NOT EXISTS idx_files_work ON files(work_id);
             CREATE INDEX IF NOT EXISTS idx_files_source ON files(source_id);
             CREATE INDEX IF NOT EXISTS idx_works_publisher ON works(publisher);
+            CREATE INDEX IF NOT EXISTS idx_works_clc ON works(clc_code);
             CREATE INDEX IF NOT EXISTS idx_works_updated ON works(updated_at);
 
             CREATE VIRTUAL TABLE IF NOT EXISTS works_fts USING fts5(
@@ -483,6 +484,46 @@ impl Db {
             ],
         )?;
         Ok(())
+    }
+
+    pub fn replace_work_metadata(&self, id: i64, metadata: &BookMetadata) -> Result<()> {
+        let conn = self.connection()?;
+        conn.execute(
+            "UPDATE works SET
+                title = ?1,
+                sort_title = ?2,
+                authors = ?3,
+                publisher = ?4,
+                isbn = ?5,
+                description = ?6,
+                language = ?7,
+                pub_date = ?8,
+                updated_at = ?9
+             WHERE id = ?10",
+            params![
+                metadata.title,
+                sort_key(&metadata.title),
+                metadata.authors,
+                metadata.publisher,
+                metadata.isbn,
+                metadata.description,
+                metadata.language,
+                metadata.pub_date,
+                now(),
+                id,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn work_has_epub(&self, work_id: i64) -> Result<bool> {
+        let conn = self.connection()?;
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM files WHERE work_id = ?1 AND format = 'epub' AND missing = 0",
+            params![work_id],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
     }
 
     pub fn set_work_cover(&self, id: i64, cover_path: &str) -> Result<()> {
@@ -916,6 +957,14 @@ fn build_work_where(filter: &WorkFilter) -> (String, Vec<Value>) {
             "EXISTS (SELECT 1 FROM files f WHERE f.work_id = w.id AND f.source_id = ?)".to_string(),
         );
         values.push(Value::Integer(source_id));
+    }
+    if let Some(code) = &filter.clc_code {
+        if code == crate::clc::UNCLASSIFIED_CODE {
+            clauses.push("(w.clc_code = ? OR w.clc_code = '')".to_string());
+        } else {
+            clauses.push("w.clc_code = ?".to_string());
+        }
+        values.push(Value::Text(code.clone()));
     }
     let sql = if clauses.is_empty() {
         String::new()
