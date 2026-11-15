@@ -118,6 +118,27 @@
 
   prev.addEventListener('click', function () { goTo(currentPage - 1); });
   next.addEventListener('click', function () { goTo(currentPage + 1); });
+
+  let touchStartX = 0;
+  let touchStartY = 0;
+  let touchTracking = false;
+  reader.addEventListener('touchstart', function (event) {
+    if (event.touches.length !== 1) { touchTracking = false; return; }
+    const touch = event.touches[0];
+    touchStartX = touch.clientX;
+    touchStartY = touch.clientY;
+    touchTracking = true;
+  }, { passive: true });
+  reader.addEventListener('touchend', function (event) {
+    if (!touchTracking) return;
+    touchTracking = false;
+    const touch = event.changedTouches[0];
+    if (!touch) return;
+    const dx = touch.clientX - touchStartX;
+    const dy = touch.clientY - touchStartY;
+    if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    goTo(currentPage + (dx < 0 ? 1 : -1));
+  }, { passive: true });
   jump.addEventListener('click', function () { goTo(Number(pageInput.value) || 1); });
   pageInput.addEventListener('keydown', function (event) {
     if (event.key === 'Enter') goTo(Number(pageInput.value) || 1);

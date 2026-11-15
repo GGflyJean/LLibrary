@@ -1,4 +1,4 @@
-const CACHE = 'llibrary-v14';
+const CACHE = 'llibrary-v15';
 const ASSETS = [
   '/static/style.css',
   '/static/progress.js',

@@ -190,7 +190,7 @@ button.secondary { background: var(--surface); color: var(--accent); }
 .reader-overlay-close {
   position: absolute;
   top: 0.75rem;
-  right: 0.75rem;
+  left: 0.75rem;
   z-index: 2;
   width: 2.5rem;
   height: 2.5rem;

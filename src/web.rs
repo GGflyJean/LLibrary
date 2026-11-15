@@ -2292,7 +2292,8 @@ mod tests {
         assert!(body.contains("epub.min.js"));
         assert!(body.contains(&format!("data-url=\"/files/{file}/book.epub\"")));
         assert!(body.contains("reader-toc-toggle"));
-        assert!(body.contains("reader-percent"));
+        assert!(body.contains("id=\"reader-page\""));
+        assert!(body.contains("id=\"reader-pages\""));
         assert!(body.contains("reader-zoom-in"));
         assert!(body.contains("reader-jump"));
 

@@ -89,7 +89,8 @@ const view = document.getElementById('kindle-view')
 const status = document.getElementById('kindle-status')
 const tocPanel = document.getElementById('reader-toc')
 const tocList = document.getElementById('reader-toc-list')
-const percentInput = document.getElementById('reader-percent')
+const pageInput = document.getElementById('reader-page')
+const pagesLabel = document.getElementById('reader-pages')
 const zoomValue = document.getElementById('reader-zoom-value')
 
 if (root && view) {
@@ -101,6 +102,10 @@ if (root && view) {
   let zoom = Number(localStorage.getItem(zoomKey) || 100)
   let ready = false
   let navigating = false
+  let totalPages = 0
+  if (pageInput) pageInput.disabled = true
+  const jumpButtonEl = document.getElementById('reader-jump')
+  if (jumpButtonEl) jumpButtonEl.disabled = true
 
   const setStatus = (text) => {
     if (!status) return
@@ -162,10 +167,21 @@ if (root && view) {
     const location = event.detail || {}
     if (typeof location.fraction === 'number') {
       localStorage.setItem(progressKey, String(location.fraction))
-      if (percentInput)
-        percentInput.value = String(Math.round(location.fraction * 100))
       if (window.llibraryProgress)
         window.llibraryProgress.save('kindle', String(location.fraction), location.fraction)
+    }
+    const loc = location.location
+    if (loc && typeof loc.total === 'number' && loc.total > 0) {
+      totalPages = loc.total
+      if (pagesLabel) pagesLabel.textContent = String(loc.total)
+      if (pageInput) {
+        pageInput.max = String(loc.total)
+        pageInput.disabled = false
+      }
+      if (jumpButtonEl) jumpButtonEl.disabled = false
+    }
+    if (pageInput && loc && typeof loc.current === 'number') {
+      pageInput.value = String(loc.current + 1)
     }
     if (navigating) {
       navigating = false
@@ -239,9 +255,12 @@ if (root && view) {
 
   const jump = document.getElementById('reader-jump')
   if (jump) jump.addEventListener('click', async () => {
-    if (!ready) return
-    const percent = Math.max(0, Math.min(100, Number(percentInput?.value) || 0))
-    await loadWithStatus(() => view.goToFraction(percent / 100))
+    if (!ready || !totalPages) return
+    const page = Math.max(1, Math.min(totalPages, Math.round(Number(pageInput?.value) || 1)))
+    await loadWithStatus(() => view.goToFraction((page - 1) / totalPages))
+  })
+  if (pageInput) pageInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') jump?.click()
   })
 
   const zoomOut = document.getElementById('reader-zoom-out')

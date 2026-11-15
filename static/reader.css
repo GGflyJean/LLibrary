@@ -26,8 +26,14 @@ body.reader-page {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.reader-actions { display: flex; gap: 0.45rem; align-items: center; flex-wrap: wrap; }
-.reader-actions a, .reader-actions button {
+.reader-actions, .reader-top-actions {
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.reader-actions a, .reader-actions button,
+.reader-top-actions a, .reader-top-actions button {
   color: #3d5a80;
   background: none;
   border: 0;
@@ -36,8 +42,26 @@ body.reader-page {
   cursor: pointer;
   text-decoration: none;
 }
-.reader-actions a:hover, .reader-actions button:hover { text-decoration: underline; }
+.reader-actions a:hover, .reader-actions button:hover,
+.reader-top-actions a:hover, .reader-top-actions button:hover { text-decoration: underline; }
 .reader-actions button:disabled { color: #999; cursor: default; }
+.reader-header { order: 0; }
+.reader-footer {
+  order: 2;
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: center;
+  padding: 0.4rem 0.6rem calc(0.4rem + env(safe-area-inset-bottom));
+  background: #fff;
+  border-top: 1px solid #e2ddd3;
+  font-size: 0.9rem;
+}
+body.reader-page > .kindle-reader,
+body.reader-page > .pdf-reader,
+body.reader-page > .txt-reader,
+body.reader-page > .reader-message { order: 1; }
+.reader-footer .reader-actions { justify-content: center; }
+body.reader-page.in-overlay .reader-header { padding-left: 3.8rem; }
 .reader-jump { display: inline-flex; gap: 0.3rem; align-items: center; }
 .reader-jump input {
   width: 4.5rem;
@@ -96,7 +120,7 @@ body.reader-page {
 .reader-zoom { display: inline-flex; align-items: center; gap: 0.2rem; }
 .reader-zoom span { min-width: 2.8rem; text-align: center; color: #6d675f; font-size: 0.85rem; }
 
-.pdf-reader { flex: 1; overflow: auto; background: #525659; }
+.pdf-reader { flex: 1; overflow: auto; background: #525659; touch-action: pan-y; overscroll-behavior-x: contain; }
 .pdf-canvas-wrap { min-height: 100%; padding: 1rem; display: flex; justify-content: center; align-items: flex-start; box-sizing: border-box; }
 .pdf-canvas { background: #fff; box-shadow: 0 2px 14px rgba(0, 0, 0, 0.35); max-width: 100%; height: auto; }
 .pdf-status { color: #fff; text-align: center; padding: 2rem 1rem; font-size: 0.95rem; }

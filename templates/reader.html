@@ -4,25 +4,32 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ title }}</title>
-  <link rel="stylesheet" href="/static/reader.css?v=14">
+  <link rel="stylesheet" href="/static/reader.css?v=15">
 </head>
 <body class="reader-page" data-back-url="{{ back_url }}" data-work-id="{{ work_id }}" data-file-id="{{ file_id }}">
   <header class="reader-header">
     <span class="reader-title">{{ title }}</span>
+    <span class="reader-top-actions">
+      <a href="{{ download_url }}">下载</a>
+      <a href="{{ back_url }}">返回书库</a>
+      <button type="button" id="reader-close">关闭</button>
+    </span>
+  </header>
+  <footer class="reader-footer">
     <span class="reader-actions">
       {% if is_epub %}
         <button type="button" id="reader-toc-toggle">目录</button>
         <button type="button" id="reader-prev">上一页</button>
         <button type="button" id="reader-next">下一页</button>
+        <span class="reader-jump">
+          <input id="reader-page" type="number" min="1" value="1" title="页码">
+          <span class="muted">/ <span id="reader-pages">-</span> 页</span>
+          <button type="button" id="reader-jump">跳转</button>
+        </span>
         <span class="reader-zoom">
           <button type="button" id="reader-zoom-out">A−</button>
           <span id="reader-zoom-value">100%</span>
           <button type="button" id="reader-zoom-in">A+</button>
-        </span>
-        <span class="reader-jump">
-          <input id="reader-percent" type="number" min="0" max="100" step="1" value="0" title="阅读进度百分比">
-          <span class="muted">%</span>
-          <button type="button" id="reader-jump">跳转</button>
         </span>
       {% endif %}
       {% if is_pdf %}
@@ -59,22 +66,19 @@
         <button type="button" id="reader-toc-toggle">目录</button>
         <button type="button" id="reader-prev">上一页</button>
         <button type="button" id="reader-next">下一页</button>
+        <span class="reader-jump">
+          <input id="reader-page" type="number" min="1" value="1" title="页码">
+          <span class="muted">/ <span id="reader-pages">-</span> 页</span>
+          <button type="button" id="reader-jump">跳转</button>
+        </span>
         <span class="reader-zoom">
           <button type="button" id="reader-zoom-out">A−</button>
           <span id="reader-zoom-value">100%</span>
           <button type="button" id="reader-zoom-in">A+</button>
         </span>
-        <span class="reader-jump">
-          <input id="reader-percent" type="number" min="0" max="100" step="1" value="0" title="阅读进度百分比">
-          <span class="muted">%</span>
-          <button type="button" id="reader-jump">跳转</button>
-        </span>
       {% endif %}
-      <a href="{{ download_url }}">下载</a>
-      <a href="{{ back_url }}">返回书库</a>
-      <button type="button" id="reader-close">关闭</button>
     </span>
-  </header>
+  </footer>
 
   {% if has_toc %}
   <aside id="reader-toc" class="reader-toc" hidden>
@@ -86,7 +90,7 @@
   </aside>
   {% endif %}
 
-  <script src="/static/progress.js?v=14"></script>
+  <script src="/static/progress.js?v=15"></script>
 
   {% if is_epub %}
   <div class="kindle-reader">
@@ -208,9 +212,11 @@
       });
       applyZoom();
 
-      const percentInput = document.getElementById('reader-percent');
+      const pageInput = document.getElementById('reader-page');
+      const pagesLabel = document.getElementById('reader-pages');
       const jumpButton = document.getElementById('reader-jump');
       let locationsReady = false;
+      let totalPages = 0;
 
       function percentOf(cfi) {
         try {
@@ -220,31 +226,42 @@
         }
       }
 
-      function updatePercent(cfi) {
-        percentInput.value = Math.round(percentOf(cfi) * 100);
+      function updatePage(cfi) {
+        if (!locationsReady) return;
+        try {
+          const index = book.locations.locationFromCfi(cfi);
+          if (typeof index === 'number' && index >= 0) {
+            pageInput.value = String(index + 1);
+          }
+        } catch (error) {
+          /* ignore */
+        }
       }
 
       rendition.on('relocated', function (location) {
         if (location && location.start) {
           localStorage.setItem(key, location.start.cfi);
           const percent = locationsReady ? percentOf(location.start.cfi) : 0;
-          if (locationsReady) updatePercent(location.start.cfi);
+          if (locationsReady) updatePage(location.start.cfi);
           if (window.llibraryProgress) {
             window.llibraryProgress.save('epub', location.start.cfi, percent);
           }
         }
       });
 
-      percentInput.disabled = true;
+      pageInput.disabled = true;
       jumpButton.disabled = true;
       book.ready
         .then(function () { return book.locations.generate(1600); })
         .then(function () {
           locationsReady = true;
-          percentInput.disabled = false;
+          totalPages = book.locations.length();
+          pagesLabel.textContent = String(totalPages);
+          pageInput.max = String(totalPages);
+          pageInput.disabled = false;
           jumpButton.disabled = false;
           const current = rendition.currentLocation ? rendition.currentLocation() : null;
-          if (current && current.start) updatePercent(current.start.cfi);
+          if (current && current.start) updatePage(current.start.cfi);
           if (pendingPercent > 0) {
             const cfi = book.locations.cfiFromPercentage(Math.min(1, pendingPercent));
             pendingPercent = 0;
@@ -254,10 +271,13 @@
         .catch(function () { jumpButton.textContent = '不可用'; });
 
       jumpButton.addEventListener('click', function () {
-        if (!locationsReady) return;
-        const percent = Math.max(0, Math.min(100, Number(percentInput.value) || 0));
-        const cfi = book.locations.cfiFromPercentage(percent / 100);
+        if (!locationsReady || !totalPages) return;
+        const page = Math.max(1, Math.min(totalPages, Math.round(Number(pageInput.value) || 1)));
+        const cfi = book.locations.cfiFromLocation(page - 1);
         if (cfi) rendition.display(cfi);
+      });
+      pageInput.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') jumpButton.click();
       });
 
       const tocPanel = document.getElementById('reader-toc');
@@ -305,6 +325,34 @@
 
       document.getElementById('reader-prev').addEventListener('click', function () { rendition.prev(); });
       document.getElementById('reader-next').addEventListener('click', function () { rendition.next(); });
+
+      const swipeDocs = new WeakSet();
+      function attachSwipe(doc) {
+        if (!doc || swipeDocs.has(doc)) return;
+        swipeDocs.add(doc);
+        let startX = 0, startY = 0, tracking = false;
+        doc.addEventListener('touchstart', function (event) {
+          if (event.touches.length !== 1) { tracking = false; return; }
+          const touch = event.touches[0];
+          startX = touch.clientX;
+          startY = touch.clientY;
+          tracking = true;
+        }, { passive: true });
+        doc.addEventListener('touchend', function (event) {
+          if (!tracking) return;
+          tracking = false;
+          const touch = event.changedTouches[0];
+          if (!touch) return;
+          const dx = touch.clientX - startX;
+          const dy = touch.clientY - startY;
+          if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+          if (dx < 0) rendition.next(); else rendition.prev();
+        }, { passive: true });
+      }
+      rendition.on('rendered', function (section, view) {
+        if (view && view.document) attachSwipe(view.document);
+      });
+
       document.addEventListener('keydown', function (event) {
         const tag = event.target && event.target.tagName;
         if (tag === 'INPUT' || tag === 'TEXTAREA') return;
@@ -330,7 +378,7 @@
     <div id="pdf-status" class="pdf-status">正在加载 PDF…</div>
   </div>
   <script src="/static/pdfjs/pdf.min.js"></script>
-  <script src="/static/reader-pdf.js?v=14"></script>
+  <script src="/static/reader-pdf.js?v=15"></script>
   {% endif %}
 
   {% if is_txt %}
@@ -338,7 +386,7 @@
     <div id="txt-viewport" class="txt-viewport"><div id="txt-content" class="txt-content"></div></div>
     <div id="txt-status" class="kindle-status">正在加载文本…</div>
   </div>
-  <script src="/static/reader-txt.js?v=14"></script>
+  <script src="/static/reader-txt.js?v=15"></script>
   {% endif %}
 
   {% if is_kindle %}
@@ -346,7 +394,7 @@
     <foliate-view id="kindle-view"></foliate-view>
     <div id="kindle-status" class="kindle-status">正在加载电子书…</div>
   </div>
-  <script type="module" src="/static/reader-kindle.js?v=14"></script>
+  <script type="module" src="/static/reader-kindle.js?v=15"></script>
   {% endif %}
 
   {% if !supported %}
@@ -355,6 +403,7 @@
     <p><a href="{{ download_url }}">下载文件</a></p>
   </div>
   {% endif %}
+
 
   <script>
     window.addEventListener('message', function (event) {
@@ -371,6 +420,7 @@
     (function () {
       const close = document.getElementById('reader-close');
       if (window.parent !== window) {
+        document.body.classList.add('in-overlay');
         close.style.display = 'none';
       }
       close.addEventListener('click', function () {
