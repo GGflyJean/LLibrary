@@ -152,6 +152,8 @@ table.files .path { word-break: break-all; color: var(--muted); }
 
 .inline { display: inline; }
 button.danger { background: var(--danger); border-color: var(--danger); }
+button.secondary { background: var(--surface); color: var(--accent); }
+.actions { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
 .source-form { max-width: 42rem; }
 .source-form h2 { margin-top: 0; }
 .source-form label { display: block; margin: 0.7rem 0; }

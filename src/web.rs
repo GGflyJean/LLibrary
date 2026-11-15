@@ -292,9 +292,11 @@ pub fn router(state: AppState) -> Router {
         .route("/logout", post(logout))
         .route("/scans", get(scans_page))
         .route("/scan", post(scan_now))
+        .route("/rebuild", post(rebuild_all))
         .route("/sources", get(sources_page).post(add_source))
         .route("/sources/{id}/delete", post(delete_source))
         .route("/sources/{id}/scan", post(scan_source))
+        .route("/sources/{id}/rebuild", post(rebuild_source))
         .route("/reclassify", post(reclassify))
         .route("/api/scans", get(api_scans))
         .route("/api/scans/current", get(api_scan_current))
@@ -1132,6 +1134,16 @@ async fn scan_now(State(state): State<AppState>, headers: HeaderMap) -> Response
     }
 }
 
+async fn rebuild_all(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    if let Some(response) = require_api(&state, &headers) {
+        return response;
+    }
+    match state.scanner.enqueue_rebuild_all().await {
+        Ok(()) => Redirect::to("/scans").into_response(),
+        Err(error) => internal(error),
+    }
+}
+
 async fn sources_page(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1287,6 +1299,20 @@ async fn scan_source(
         return response;
     }
     match state.scanner.enqueue_source(id).await {
+        Ok(()) => Redirect::to("/sources").into_response(),
+        Err(error) => internal(error),
+    }
+}
+
+async fn rebuild_source(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Response {
+    if let Some(response) = require_web(&state, &headers) {
+        return response;
+    }
+    match state.scanner.enqueue_rebuild_source(id).await {
         Ok(()) => Redirect::to("/sources").into_response(),
         Err(error) => internal(error),
     }
@@ -2517,7 +2543,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        assert!(body_text(response).await.contains("添加来源"));
+        let body = body_text(response).await;
+        assert!(body.contains("添加来源"));
+        assert!(body.contains("增量扫描"));
+        assert!(body.contains("索引重构"));
 
         state.db.set_work_clc(work, "A7", "马克思主义理论").unwrap();
         let response = app
@@ -2554,6 +2583,13 @@ mod tests {
         let response = app
             .clone()
             .oneshot(post_form(&format!("/sources/{new_id}/scan"), "", true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+
+        let response = app
+            .clone()
+            .oneshot(post_form(&format!("/sources/{new_id}/rebuild"), "", true))
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
@@ -2611,19 +2647,22 @@ mod tests {
 
         let response = app.clone().oneshot(request("/scans", true)).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+        assert!(body_text(response).await.contains("索引重构全部来源"));
 
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/scan")
-                    .header(header::AUTHORIZATION, basic())
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        for uri in ["/scan", "/rebuild"] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(uri)
+                        .header(header::AUTHORIZATION, basic())
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        }
     }
 }

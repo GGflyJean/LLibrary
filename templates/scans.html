@@ -3,8 +3,12 @@
 {% block content %}
 <div class="page-head">
   <h1>扫描</h1>
-  <form method="post" action="/scan"><button type="submit">立即扫描全部来源</button></form>
+  <div class="actions">
+    <form method="post" action="/scan" class="inline"><button type="submit">增量扫描全部来源</button></form>
+    <form method="post" action="/rebuild" class="inline" onsubmit="return confirm('索引重构会重新读取全部文件、重算指纹并重建分类和搜索索引，可能耗时较长。继续？');"><button type="submit" class="secondary">索引重构全部来源</button></form>
+  </div>
 </div>
+<p class="muted">增量扫描只处理新增或变化的文件；索引重构会重新读取全部文件、重算指纹，并重建分类和搜索索引。</p>
 {% if scanning %}
 <div class="banner">正在扫描 {{ progress_source() }}：{{ progress_phase() }} {{ progress_processed() }}/{{ progress_total() }}</div>
 {% endif %}

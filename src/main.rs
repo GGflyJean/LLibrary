@@ -41,6 +41,11 @@ enum Command {
         #[arg(long)]
         source: Option<i64>,
     },
+    /// 全量重建索引（重新读取文件、重算指纹、重建分类和 FTS）
+    Rebuild {
+        #[arg(long)]
+        source: Option<i64>,
+    },
     /// 重新分类全部作品
     Reclassify,
     /// 生成 Argon2 密码哈希
@@ -82,6 +87,7 @@ async fn main() -> Result<()> {
         Command::Serve => serve().await,
         Command::Scan { source } => scan(source).await,
         Command::Reparse { source } => reparse(source).await,
+        Command::Rebuild { source } => rebuild(source).await,
         Command::Sources { command } => sources(command).await,
         Command::Reclassify => reclassify().await,
         Command::HashPassword { password } => {
@@ -184,6 +190,23 @@ async fn reparse(source: Option<i64>) -> Result<()> {
             let report = scanner.reparse_source(source.id).await?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
+    }
+    Ok(())
+}
+
+async fn rebuild(source: Option<i64>) -> Result<()> {
+    init_tracing();
+    let config = Config::from_env()?;
+    config.ensure_dirs()?;
+    let db = Db::open(&config.db_path)?;
+    let covers = CoverStore::new(config.covers_dir())?;
+    let scanner = Scanner::new(db, covers, config.secret.clone());
+    if let Some(source_id) = source {
+        let report = scanner.rebuild_source(source_id).await?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        let reports = scanner.rebuild_all().await;
+        println!("{}", serde_json::to_string_pretty(&reports)?);
     }
     Ok(())
 }

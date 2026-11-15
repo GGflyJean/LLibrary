@@ -26,6 +26,25 @@ use crate::sources::{SourceBackend, SourceEntry};
 pub enum ScanCommand {
     All,
     Source(i64),
+    RebuildAll,
+    RebuildSource(i64),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScanMode {
+    Incremental,
+    Reparse,
+    Rebuild,
+}
+
+impl ScanMode {
+    fn force(self) -> bool {
+        self != Self::Incremental
+    }
+
+    fn rehash(self) -> bool {
+        self == Self::Rebuild
+    }
 }
 
 #[derive(Clone)]
@@ -83,6 +102,14 @@ impl Scanner {
     }
 
     pub async fn scan_all(&self) -> Vec<ScanReport> {
+        self.scan_all_mode(ScanMode::Incremental).await
+    }
+
+    pub async fn rebuild_all(&self) -> Vec<ScanReport> {
+        self.scan_all_mode(ScanMode::Rebuild).await
+    }
+
+    async fn scan_all_mode(&self, mode: ScanMode) -> Vec<ScanReport> {
         let sources = match self.db.list_sources() {
             Ok(sources) => sources,
             Err(error) => {
@@ -97,7 +124,7 @@ impl Scanner {
         };
         let mut reports = Vec::new();
         for source in sources.into_iter().filter(|source| source.enabled) {
-            match self.scan_source(source.id).await {
+            match self.scan_source_mode(source.id, mode).await {
                 Ok(report) => reports.push(report),
                 Err(error) => reports.push(ScanReport {
                     source_id: source.id,
@@ -111,14 +138,19 @@ impl Scanner {
     }
 
     pub async fn scan_source(&self, source_id: i64) -> Result<ScanReport> {
-        self.scan_source_mode(source_id, false).await
+        self.scan_source_mode(source_id, ScanMode::Incremental)
+            .await
     }
 
     pub async fn reparse_source(&self, source_id: i64) -> Result<ScanReport> {
-        self.scan_source_mode(source_id, true).await
+        self.scan_source_mode(source_id, ScanMode::Reparse).await
     }
 
-    async fn scan_source_mode(&self, source_id: i64, reparse: bool) -> Result<ScanReport> {
+    pub async fn rebuild_source(&self, source_id: i64) -> Result<ScanReport> {
+        self.scan_source_mode(source_id, ScanMode::Rebuild).await
+    }
+
+    async fn scan_source_mode(&self, source_id: i64, mode: ScanMode) -> Result<ScanReport> {
         let _lock = self.scan_lock.lock().await;
         let _active = ActiveScan::new(self.active_scans.clone(), self.max_active_scans.clone());
         let config = self.load_source_config(source_id)?;
@@ -192,7 +224,7 @@ impl Scanner {
             async move {
                 (
                     rel_path,
-                    process_entry(backend, db, source, entry, large_files, reparse).await,
+                    process_entry(backend, db, source, entry, large_files, mode).await,
                 )
             }
         }))
@@ -207,7 +239,7 @@ impl Scanner {
                         stats.errors += 1;
                         errors.push(format!("{}: {error}", processed.entry.rel_path));
                     }
-                    match self.persist(&source, &processed, reparse) {
+                    match self.persist(&source, &processed, mode) {
                         Ok(()) => {
                             if processed.existing {
                                 stats.changed += 1;
@@ -231,7 +263,11 @@ impl Scanner {
                 run_id,
                 source_id,
                 source_name: source.name.clone(),
-                phase: "scanning".to_string(),
+                phase: if mode == ScanMode::Rebuild {
+                    "rebuilding".to_string()
+                } else {
+                    "scanning".to_string()
+                },
                 processed: processed_count,
                 total,
                 stats: stats.clone(),
@@ -239,8 +275,19 @@ impl Scanner {
         }
 
         stats.missing = self.db.mark_missing(source_id, &seen)?;
+        if mode == ScanMode::Rebuild {
+            match self.db.reset_clc() {
+                Ok(count) => tracing::info!(count, "索引重构：已重置自动分类"),
+                Err(error) => tracing::warn!(%error, "索引重构：重置分类失败"),
+            }
+        }
         if let Err(error) = crate::clc::classify_unclassified(&self.db) {
             tracing::warn!(%error, "自动分类未完成");
+        }
+        if mode == ScanMode::Rebuild {
+            if let Err(error) = self.db.rebuild_fts() {
+                tracing::warn!(%error, "索引重构：FTS 重建失败");
+            }
         }
         stats.duration_ms = started.elapsed().as_millis();
         let status = if stats.errors > 0 {
@@ -269,7 +316,7 @@ impl Scanner {
         &self,
         source: &SourceRecord,
         processed: &ProcessedFile,
-        reparse: bool,
+        mode: ScanMode,
     ) -> Result<()> {
         let entry = &processed.entry;
         let format = metadata::extension_of(&entry.rel_path);
@@ -278,12 +325,16 @@ impl Scanner {
         let work_id = self.find_or_create_work(book, &basename)?;
 
         if format == "epub" {
-            self.db.update_work_metadata(work_id, book, None)?;
-        } else if !self.db.work_has_epub(work_id)? {
-            if reparse {
+            if mode == ScanMode::Rebuild {
                 self.db.replace_work_metadata(work_id, book)?;
             } else {
                 self.db.update_work_metadata(work_id, book, None)?;
+            }
+        } else if !self.db.work_has_epub(work_id)? {
+            if mode == ScanMode::Incremental {
+                self.db.update_work_metadata(work_id, book, None)?;
+            } else {
+                self.db.replace_work_metadata(work_id, book)?;
             }
         }
 
@@ -386,6 +437,19 @@ impl ScannerHandle {
                             tracing::warn!(source_id = id, %error, "扫描失败");
                         }
                     }
+                    ScanCommand::RebuildAll => {
+                        let reports = worker.rebuild_all().await;
+                        for report in reports {
+                            if let Some(error) = report.error {
+                                tracing::warn!(source = %report.source_name, %error, "索引重构完成但存在错误");
+                            }
+                        }
+                    }
+                    ScanCommand::RebuildSource(id) => {
+                        if let Err(error) = worker.rebuild_source(id).await {
+                            tracing::warn!(source_id = id, %error, "索引重构失败");
+                        }
+                    }
                 }
             }
         });
@@ -402,6 +466,20 @@ impl ScannerHandle {
     pub async fn enqueue_source(&self, id: i64) -> Result<()> {
         self.sender
             .send(ScanCommand::Source(id))
+            .await
+            .map_err(|_| anyhow::anyhow!("扫描队列已关闭"))
+    }
+
+    pub async fn enqueue_rebuild_all(&self) -> Result<()> {
+        self.sender
+            .send(ScanCommand::RebuildAll)
+            .await
+            .map_err(|_| anyhow::anyhow!("扫描队列已关闭"))
+    }
+
+    pub async fn enqueue_rebuild_source(&self, id: i64) -> Result<()> {
+        self.sender
+            .send(ScanCommand::RebuildSource(id))
             .await
             .map_err(|_| anyhow::anyhow!("扫描队列已关闭"))
     }
@@ -545,10 +623,10 @@ async fn process_entry(
     source: SourceRecord,
     entry: SourceEntry,
     large_files: Arc<Semaphore>,
-    reparse: bool,
+    mode: ScanMode,
 ) -> Result<ScanOutcome> {
     let existing = db.find_file(source.id, &entry.rel_path)?;
-    if !reparse {
+    if !mode.force() {
         if let Some(existing) = &existing {
             let hash_ok = source.hash_policy != "hash" || !existing.hash.is_empty();
             if !existing.missing
@@ -585,14 +663,7 @@ async fn process_entry(
     let existing_flag = existing.is_some();
     let existing_hash = existing.as_ref().map(|record| record.hash.clone());
     let result = tokio::task::spawn_blocking(move || {
-        process_file(
-            &source,
-            &entry,
-            &path,
-            existing_flag,
-            reparse,
-            existing_hash,
-        )
+        process_file(&source, &entry, &path, existing_flag, mode, existing_hash)
     })
     .await
     .context("扫描任务失败")?;
@@ -614,10 +685,12 @@ fn process_file(
     entry: &SourceEntry,
     path: &Path,
     existing: bool,
-    reparse: bool,
+    mode: ScanMode,
     existing_hash: Option<String>,
 ) -> Result<ProcessedFile> {
-    let hash = if reparse {
+    let hash = if mode.rehash() {
+        hash_file(path)?
+    } else if mode == ScanMode::Reparse {
         existing_hash.unwrap_or_default()
     } else if source.hash_policy == "hash" {
         hash_file(path)?

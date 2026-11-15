@@ -734,6 +734,12 @@ impl Db {
         Ok(changed)
     }
 
+    pub fn rebuild_fts(&self) -> Result<()> {
+        let conn = self.connection()?;
+        conn.execute("INSERT INTO works_fts(works_fts) VALUES('rebuild')", [])?;
+        Ok(())
+    }
+
     pub fn set_work_clc_batch(&self, updates: &[(i64, String, String)]) -> Result<()> {
         if updates.is_empty() {
             return Ok(());

@@ -5,6 +5,7 @@
   <h1>扫描来源</h1>
   <a href="/">返回书库</a>
 </div>
+<p class="muted">增量扫描只处理新增或变化的文件；索引重构会重新读取全部文件、重算指纹，并重建分类和搜索索引，可能耗时较长。</p>
 
 {% if !notice.is_empty() %}<div class="banner">{{ notice }}</div>{% endif %}
 {% if !error.is_empty() %}<p class="error">{{ error }}</p>{% endif %}
@@ -61,7 +62,8 @@
         {% if !source.last_error.is_empty() %}<br><span class="error">{{ source.last_error }}</span>{% endif %}
       </td>
       <td>
-        <form method="post" action="/sources/{{ source.id }}/scan" class="inline"><button type="submit">扫描</button></form>
+        <form method="post" action="/sources/{{ source.id }}/scan" class="inline"><button type="submit">增量扫描</button></form>
+        <form method="post" action="/sources/{{ source.id }}/rebuild" class="inline" onsubmit="return confirm('索引重构会重新读取全部文件、重算指纹并重建分类和搜索索引，可能耗时较长。继续？');"><button type="submit" class="secondary">索引重构</button></form>
         <form method="post" action="/sources/{{ source.id }}/delete" class="inline" onsubmit="return confirm('删除来源不会删除书籍文件，确定？');"><button type="submit" class="danger">删除</button></form>
       </td>
     </tr>

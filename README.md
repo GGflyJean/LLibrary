@@ -141,9 +141,18 @@ cargo run -- sources add --name 远程 --kind webdav \
 # 重新解析已有文件的元数据（不重新计算哈希）
 ... cargo run -- reparse
 ... cargo run -- reparse --source 1
+
+# 全量重建索引（重算指纹、重建分类和 FTS）
+... cargo run -- rebuild
+... cargo run -- rebuild --source 1
 ```
 
 定时扫描默认关闭。`SCAN_CRON` 支持标准 5 段 cron（秒默认为 0），例如 `0 3 * * *`。确认首次全量扫描成本后再启用。
+
+Web 的 `/sources` 和 `/scans` 提供两种操作：
+
+- **增量扫描**：只处理新增或变化的文件，和定时扫描一致。
+- **索引重构**：重新读取全部文件、重算内容指纹，并重建分类和搜索索引，适合元数据/分类规则调整后使用，耗时较长。
 
 首轮扫描会读取每个 EPUB/PDF 解析元数据并计算 BLAKE3 指纹，104 GB 书库可能需要较长时间；建议在 NAS 空闲时手动触发，观察 `/scans` 的耗时后再决定是否开启定时扫描。
 
