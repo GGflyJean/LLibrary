@@ -49,15 +49,16 @@
 
 实现方式：
 
-- EPUB：`epub.js` + `JSZip`（已放入 `static/epubjs/`），同源读取 `/files/{id}`，进度暂存 `localStorage`
+- EPUB：`epub.js` + `JSZip`（已放入 `static/epubjs/`），同源读取 `/files/{id}`；对格式不严格的 XHTML 会回退为 HTML 解析，避免部分章节空白
   - 目录：读取 EPUB 自带目录，点击章节跳转
   - 跳转：输入 0-100 的阅读百分比跳转
+- 阅读进度：EPUB/PDF/TXT/AZW3 都会自动保存到服务端 SQLite 的 `reading_progress` 表（按作品记录），随 `DATA_DIR`/数据卷持久化，重建镜像不会丢失；`localStorage` 仅作为即时缓存
 - PDF：内置 PDF.js Canvas 阅读器，不依赖浏览器原生 PDF 查看器
   - 页码：页码输入、上一页/下一页、目录抽屉、缩放/适宽
   - 移动端同样使用 Canvas 渲染，避免 iframe PDF 白屏
 - TXT：服务端自动识别 UTF-8/GB18030 并转为 UTF-8；阅读器按视口分页，支持上一页/下一页、页码跳转和字号缩放，不提供编辑
 - EPUB 缩放：`A− / A+` 调整字号（60%-220%），按设备保存在 localStorage
-- AZW3/AZW/MOBI：如果同作品有 EPUB，会自动跳到该 EPUB 阅读页；没有 EPUB 时用内置 Kindle 阅读器（`foliate-js`，已放入 `static/foliate/`）在浏览器内解析 MOBI6/KF8，支持目录、上一页/下一页、百分比跳转、字号缩放和本地进度
+- AZW3/AZW/MOBI：如果同作品有 EPUB，会自动跳到该 EPUB 阅读页；没有 EPUB 时用内置 Kindle 阅读器（`foliate-js`，已放入 `static/foliate/`）在浏览器内解析 MOBI6/KF8，支持目录、上一页/下一页、百分比跳转、字号缩放和服务端进度
   - Kindle 阅读器通过 HTTP Range 按块读取文件，打开时只解析并渲染首个章节，后续跳转/翻页再按需加载；KF8 的 RESC/PAGE 资源扫描对可重排书籍延后/跳过，避免打开时下载整本
   - EPUB/PDF 本身按章节/页面加载；TXT 加载时显示状态。下载按钮使用 `Content-Disposition: attachment`，不会在浏览器内打开文件
 - 不处理 DRM；极少数 epub.js 不兼容的 EPUB 仍可下载到本地阅读器
@@ -74,8 +75,8 @@
 
 | 变量 | 必填 | 默认值 | 说明 |
 |---|---|---|---|
-| `AUTH_USER` | 是 | - | 登录用户名 |
-| `AUTH_PASSWORD_HASH` | 是 | - | Argon2 PHC 哈希 |
+| `AUTH_USER` | 否 | `reader` | 登录用户名（当前 Web/OPDS 不启用登录，保留备用） |
+| `AUTH_PASSWORD_HASH` | 否 | 空 | Argon2 PHC 哈希（当前不启用登录，保留备用） |
 | `DATA_DIR` | 否 | `./data` | 数据目录（SQLite/封面/日志） |
 | `DB_PATH` | 否 | `$DATA_DIR/library.db` | SQLite 路径 |
 | `BIND_ADDR` | 否 | `127.0.0.1:8080` | 监听地址 |
@@ -99,13 +100,11 @@ cargo run -- hash-password 'change-me' | sed 's/\$/$$/g'
 ```bash
 cargo build
 DATA_DIR=./data \
-AUTH_USER=reader \
-AUTH_PASSWORD_HASH='<上一步输出的哈希>' \
 BIND_ADDR=127.0.0.1:8080 \
 cargo run
 ```
 
-打开 `http://127.0.0.1:8080`，用用户名/密码登录；OPDS 地址为 `http://127.0.0.1:8080/opds`。
+打开 `http://127.0.0.1:8080` 即可直接访问，无需登录；OPDS 地址为 `http://127.0.0.1:8080/opds`。
 
 ## 管理来源
 
@@ -223,6 +222,6 @@ static/         CSS、PWA manifest、service worker、htmx
 ## Roadmap
 
 - P2 后续：LLM 批量分类与人工复核（首版规则分类已可用）
-- P3 后续：跨设备阅读进度、阅读器主题/划线注释
+- P3 后续：阅读器主题/划线注释
 - P4：Send-to-Kindle
 - P5：监控、备份与运维加固

@@ -46,6 +46,23 @@
   function goTo(number) {
     page = Math.min(Math.max(1, Number(number) || 1), pages);
     update();
+    if (window.llibraryProgress) {
+      const percent = pages > 0 ? (page - 1) / pages : 0;
+      window.llibraryProgress.save('txt', String(page), percent);
+    }
+  }
+
+  async function restoreProgress() {
+    if (!window.llibraryProgress) return;
+    const progress = await window.llibraryProgress.load();
+    if (!progress) return;
+    let target = 0;
+    if (progress.format === 'txt' && Number(progress.locator) >= 1) {
+      target = Number(progress.locator);
+    } else if (progress.percent > 0) {
+      target = Math.round(progress.percent * pages) + 1;
+    }
+    if (target > 0) goTo(target);
   }
 
   function relayout() {
@@ -62,6 +79,7 @@
       content.textContent = await response.text();
       if (status) status.hidden = true;
       layout(true);
+      await restoreProgress();
     } catch (error) {
       content.textContent = '文本加载失败：' + error.message;
       if (status) {

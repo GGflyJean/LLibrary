@@ -101,6 +101,7 @@ struct DetailTemplate {
 #[template(path = "reader.html")]
 struct ReaderTemplate {
     title: String,
+    work_id: i64,
     file_id: i64,
     file_url: String,
     download_url: String,
@@ -271,6 +272,14 @@ struct ClassifyForm {
     clc_code: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct ProgressUpdate {
+    file_id: i64,
+    format: String,
+    locator: String,
+    percent: f64,
+}
+
 pub fn router(state: AppState) -> Router {
     let static_dir = state.static_dir.clone();
     Router::new()
@@ -301,6 +310,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/scans", get(api_scans))
         .route("/api/scans/current", get(api_scan_current))
         .route("/api/scans/{id}", get(api_scan))
+        .route(
+            "/api/progress/{work_id}",
+            get(get_progress).post(save_progress),
+        )
         .route("/health", get(health))
         .nest_service("/static", ServeDir::new(static_dir))
         .with_state(state)
@@ -642,6 +655,7 @@ async fn read_file(
         };
         return render(ReaderTemplate {
             title,
+            work_id,
             file_id: record.id,
             file_url: file_url.clone(),
             download_url,
@@ -671,6 +685,7 @@ async fn read_file(
         }
         return render(ReaderTemplate {
             title: record.basename.clone(),
+            work_id: record.work_id,
             file_id: record.id,
             file_url: file_url.clone(),
             download_url,
@@ -705,6 +720,7 @@ async fn read_file(
     };
     render(ReaderTemplate {
         title,
+        work_id,
         file_id: record.id,
         file_url,
         download_url,
@@ -1403,28 +1419,58 @@ async fn api_scan(
     }
 }
 
+async fn get_progress(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(work_id): Path<i64>,
+) -> Response {
+    if let Some(response) = require_api(&state, &headers) {
+        return response;
+    }
+    let db = state.db.clone();
+    match blocking(move || db.get_reading_progress(work_id)).await {
+        Ok(Some(progress)) => Json(progress).into_response(),
+        Ok(None) => (StatusCode::NO_CONTENT).into_response(),
+        Err(error) => internal(error),
+    }
+}
+
+async fn save_progress(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(work_id): Path<i64>,
+    Json(update): Json<ProgressUpdate>,
+) -> Response {
+    if let Some(response) = require_api(&state, &headers) {
+        return response;
+    }
+    if update.locator.len() > 2048 {
+        return (StatusCode::BAD_REQUEST, "阅读定位信息过长").into_response();
+    }
+    let db = state.db.clone();
+    let format = update.format.clone();
+    let locator = update.locator.clone();
+    let percent = update.percent;
+    match blocking(move || {
+        db.save_reading_progress(work_id, update.file_id, &format, &locator, percent)
+    })
+    .await
+    {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => internal(error),
+    }
+}
+
 async fn health() -> impl IntoResponse {
     (StatusCode::OK, "ok")
 }
 
-fn require_web(state: &AppState, headers: &HeaderMap) -> Option<Response> {
-    if state.auth.authenticate(headers) {
-        None
-    } else {
-        Some(Redirect::to("/login").into_response())
-    }
+fn require_web(_state: &AppState, _headers: &HeaderMap) -> Option<Response> {
+    None
 }
 
-fn require_api(state: &AppState, headers: &HeaderMap) -> Option<Response> {
-    if state.auth.authenticate(headers) {
-        return None;
-    }
-    let mut response = (StatusCode::UNAUTHORIZED, "需要认证").into_response();
-    response.headers_mut().insert(
-        header::WWW_AUTHENTICATE,
-        HeaderValue::from_static("Basic realm=\"LLibrary\""),
-    );
-    Some(response)
+fn require_api(_state: &AppState, _headers: &HeaderMap) -> Option<Response> {
+    None
 }
 
 fn render<T: Template>(template: T) -> Response {
@@ -1839,73 +1885,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn authentication_flow() {
+    async fn pages_are_open_without_login() {
         let (_dir, state, _work, _file) = test_state();
         let app = router(state);
 
         let response = app.clone().oneshot(request("/", false)).await.unwrap();
-        assert_eq!(response.status(), StatusCode::SEE_OTHER);
-        assert_eq!(response.headers().get(header::LOCATION).unwrap(), "/login");
+        assert_eq!(response.status(), StatusCode::OK);
 
         let response = app.clone().oneshot(request("/opds", false)).await.unwrap();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-        assert!(response.headers().contains_key(header::WWW_AUTHENTICATE));
-
-        let response = app.clone().oneshot(request("/login", false)).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-        assert!(body_text(response).await.contains("登录"));
-
-        let form = "username=reader&password=secret&next=%2F";
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/login")
-                    .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
-                    .body(Body::from(form))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::SEE_OTHER);
-        let cookie = response
-            .headers()
-            .get(header::SET_COOKIE)
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .split(';')
-            .next()
-            .unwrap()
-            .to_string();
-
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/")
-                    .header(header::COOKIE, &cookie)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
 
         let response = app
             .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/logout")
-                    .header(header::COOKIE, &cookie)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(request("/files/1", false))
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert_ne!(response.status(), StatusCode::UNAUTHORIZED);
 
         let response = app
             .clone()
@@ -1913,6 +1908,46 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn reading_progress_api_roundtrip() {
+        let (_dir, state, work, file) = test_state();
+        let app = router(state);
+
+        let response = app
+            .clone()
+            .oneshot(request(&format!("/api/progress/{work}"), false))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        let body = format!(
+            r#"{{"file_id":{file},"format":"epub","locator":"epubcfi(/6/4!/4/2/2)","percent":0.35}}"#
+        );
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/progress/{work}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        let response = app
+            .clone()
+            .oneshot(request(&format!("/api/progress/{work}"), false))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_text(response).await;
+        assert!(body.contains("epubcfi(/6/4!/4/2/2)"));
+        assert!(body.contains("\"format\":\"epub\""));
     }
 
     #[tokio::test]
@@ -2245,7 +2280,7 @@ mod tests {
             .oneshot(request(&format!("/read/{file}"), false))
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert_eq!(response.status(), StatusCode::OK);
 
         let response = app
             .clone()
@@ -2535,7 +2570,7 @@ mod tests {
             .oneshot(request("/sources", false))
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert_eq!(response.status(), StatusCode::OK);
 
         let response = app
             .clone()

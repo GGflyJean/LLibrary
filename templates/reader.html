@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ title }}</title>
-  <link rel="stylesheet" href="/static/reader.css?v=13">
+  <link rel="stylesheet" href="/static/reader.css?v=14">
 </head>
-<body class="reader-page" data-back-url="{{ back_url }}">
+<body class="reader-page" data-back-url="{{ back_url }}" data-work-id="{{ work_id }}" data-file-id="{{ file_id }}">
   <header class="reader-header">
     <span class="reader-title">{{ title }}</span>
     <span class="reader-actions">
@@ -86,6 +86,8 @@
   </aside>
   {% endif %}
 
+  <script src="/static/progress.js?v=14"></script>
+
   {% if is_epub %}
   <div class="kindle-reader">
     <div id="viewer" data-url="{{ file_url }}" data-file-id="{{ file_id }}"></div>
@@ -98,7 +100,61 @@
       const viewer = document.getElementById('viewer');
       const fileId = viewer.dataset.fileId;
       const key = 'llibrary:progress:' + fileId;
+      function decodeEpubText(bytes) {
+        if (!bytes || !bytes.length) return '';
+        try {
+          return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+        } catch (error) {
+          /* not UTF-8, detect declared encoding below */
+        }
+        const head = new TextDecoder('latin1').decode(bytes.subarray(0, Math.min(bytes.length, 2048)));
+        const match = head.match(/encoding\s*=\s*["']([^"']+)["']/i) ||
+          head.match(/charset\s*=\s*["']?([^"'\s/>]+)/i);
+        let encoding = match ? match[1].toLowerCase() : 'gb18030';
+        if (encoding === 'gb2312' || encoding === 'gbk') encoding = 'gb18030';
+        try {
+          return new TextDecoder(encoding).decode(bytes);
+        } catch (error) {
+          return new TextDecoder('gb18030').decode(bytes);
+        }
+      }
+      function patchEpubArchive(archive) {
+        if (!archive || typeof archive.handleResponse !== 'function' || archive.__llibraryPatched) return;
+        archive.__llibraryPatched = true;
+        const originalGetText = archive.getText.bind(archive);
+        archive.getText = function (path) {
+          try {
+            const name = window.decodeURIComponent(String(path).replace(/^\//, ''));
+            const entry = archive.zip && archive.zip.file(name);
+            if (entry) {
+              return entry.async('uint8array')
+                .then(decodeEpubText)
+                .catch(function () { return originalGetText(path); });
+            }
+          } catch (error) {
+            /* fall through */
+          }
+          return originalGetText(path);
+        };
+        const original = archive.handleResponse.bind(archive);
+        archive.handleResponse = function (text, type) {
+          const normalized = String(type || '').toLowerCase();
+          if (normalized === 'xhtml') {
+            try {
+              const parsed = new DOMParser().parseFromString(text, 'application/xhtml+xml');
+              if (parsed && parsed.getElementsByTagName('parsererror').length > 0) {
+                return new DOMParser().parseFromString(text, 'text/html');
+              }
+              return parsed;
+            } catch (error) {
+              return new DOMParser().parseFromString(text, 'text/html');
+            }
+          }
+          return original(text, type);
+        };
+      }
       const book = ePub(viewer.dataset.url);
+      patchEpubArchive(book.archive);
       const rendition = book.renderTo(viewer, {
         width: '100%',
         height: '100%',
@@ -107,14 +163,31 @@
       });
       const saved = localStorage.getItem(key);
       const status = document.getElementById('epub-status');
-      rendition.display(saved || undefined).then(function () {
-        if (status) status.hidden = true;
-      }).catch(function (error) {
-        if (status) {
-          status.hidden = false;
-          status.textContent = 'EPUB 加载失败：' + (error && error.message ? error.message : error);
-        }
-      });
+      let pendingPercent = 0;
+      function startAt(target) {
+        rendition.display(target).then(function () {
+          if (status) status.hidden = true;
+        }).catch(function (error) {
+          if (status) {
+            status.hidden = false;
+            status.textContent = 'EPUB 加载失败：' + (error && error.message ? error.message : error);
+          }
+        });
+      }
+      if (window.llibraryProgress) {
+        window.llibraryProgress.load().then(function (progress) {
+          if (progress && progress.format === 'epub' && progress.locator) {
+            startAt(progress.locator);
+          } else if (progress && progress.percent > 0) {
+            pendingPercent = progress.percent;
+            startAt(saved || undefined);
+          } else {
+            startAt(saved || undefined);
+          }
+        });
+      } else {
+        startAt(saved || undefined);
+      }
 
       const zoomKey = 'llibrary:zoom';
       const zoomValue = document.getElementById('reader-zoom-value');
@@ -139,18 +212,26 @@
       const jumpButton = document.getElementById('reader-jump');
       let locationsReady = false;
 
-      function updatePercent(cfi) {
+      function percentOf(cfi) {
         try {
-          percentInput.value = Math.round(book.locations.percentageFromCfi(cfi) * 100);
+          return book.locations.percentageFromCfi(cfi) || 0;
         } catch (error) {
-          /* ignore */
+          return 0;
         }
+      }
+
+      function updatePercent(cfi) {
+        percentInput.value = Math.round(percentOf(cfi) * 100);
       }
 
       rendition.on('relocated', function (location) {
         if (location && location.start) {
           localStorage.setItem(key, location.start.cfi);
+          const percent = locationsReady ? percentOf(location.start.cfi) : 0;
           if (locationsReady) updatePercent(location.start.cfi);
+          if (window.llibraryProgress) {
+            window.llibraryProgress.save('epub', location.start.cfi, percent);
+          }
         }
       });
 
@@ -164,6 +245,11 @@
           jumpButton.disabled = false;
           const current = rendition.currentLocation ? rendition.currentLocation() : null;
           if (current && current.start) updatePercent(current.start.cfi);
+          if (pendingPercent > 0) {
+            const cfi = book.locations.cfiFromPercentage(Math.min(1, pendingPercent));
+            pendingPercent = 0;
+            if (cfi) rendition.display(cfi);
+          }
         })
         .catch(function () { jumpButton.textContent = '不可用'; });
 
@@ -244,7 +330,7 @@
     <div id="pdf-status" class="pdf-status">正在加载 PDF…</div>
   </div>
   <script src="/static/pdfjs/pdf.min.js"></script>
-  <script src="/static/reader-pdf.js?v=13"></script>
+  <script src="/static/reader-pdf.js?v=14"></script>
   {% endif %}
 
   {% if is_txt %}
@@ -252,7 +338,7 @@
     <div id="txt-viewport" class="txt-viewport"><div id="txt-content" class="txt-content"></div></div>
     <div id="txt-status" class="kindle-status">正在加载文本…</div>
   </div>
-  <script src="/static/reader-txt.js?v=13"></script>
+  <script src="/static/reader-txt.js?v=14"></script>
   {% endif %}
 
   {% if is_kindle %}
@@ -260,7 +346,7 @@
     <foliate-view id="kindle-view"></foliate-view>
     <div id="kindle-status" class="kindle-status">正在加载电子书…</div>
   </div>
-  <script type="module" src="/static/reader-kindle.js?v=13"></script>
+  <script type="module" src="/static/reader-kindle.js?v=14"></script>
   {% endif %}
 
   {% if !supported %}

@@ -88,7 +88,7 @@ docker save llibrary:local -o llibrary-local.tar
 
 ## 4. 首次配置
 
-1. 打开 `http://<nas>:8080`（或你映射的宿主端口），用 `AUTH_USER` / 密码登录。
+1. 打开 `http://<nas>:8080`（或你映射的宿主端口），无需登录即可访问。
 2. 打开 `/sources`，在“添加来源”里填：
    - 名称：`主书库`
    - 类型：本地路径

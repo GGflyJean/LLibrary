@@ -1,6 +1,7 @@
-const CACHE = 'llibrary-v13';
+const CACHE = 'llibrary-v14';
 const ASSETS = [
   '/static/style.css',
+  '/static/progress.js',
   '/static/manifest.webmanifest',
   '/static/icon-192.png',
   '/static/placeholder.svg',

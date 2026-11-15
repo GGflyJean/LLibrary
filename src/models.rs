@@ -232,6 +232,16 @@ pub struct WorkDetail {
     pub files: Vec<FileRecord>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReadingProgress {
+    pub work_id: i64,
+    pub file_id: i64,
+    pub format: String,
+    pub locator: String,
+    pub percent: f64,
+    pub updated_at: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ScanRun {
     pub id: i64,

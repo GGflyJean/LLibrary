@@ -41,9 +41,8 @@ impl Config {
             .parse()
             .map_err(|error| ConfigError::Invalid("BIND_ADDR", format!("{error}")))?;
 
-        let auth_user = get("AUTH_USER").ok_or(ConfigError::Missing("AUTH_USER"))?;
-        let auth_password_hash =
-            get("AUTH_PASSWORD_HASH").ok_or(ConfigError::Missing("AUTH_PASSWORD_HASH"))?;
+        let auth_user = get("AUTH_USER").unwrap_or_else(|| "reader".to_string());
+        let auth_password_hash = get("AUTH_PASSWORD_HASH").unwrap_or_default();
 
         Ok(Self {
             data_dir,
@@ -129,23 +128,10 @@ mod tests {
     }
 
     #[test]
-    fn missing_auth_user_fails() {
-        let mut vars = base_map();
-        vars.remove("AUTH_USER");
-        assert_eq!(
-            Config::from_map(&vars).unwrap_err(),
-            ConfigError::Missing("AUTH_USER")
-        );
-    }
-
-    #[test]
-    fn missing_password_hash_fails() {
-        let mut vars = base_map();
-        vars.remove("AUTH_PASSWORD_HASH");
-        assert_eq!(
-            Config::from_map(&vars).unwrap_err(),
-            ConfigError::Missing("AUTH_PASSWORD_HASH")
-        );
+    fn auth_defaults_when_missing() {
+        let config = Config::from_map(&HashMap::new()).expect("config");
+        assert_eq!(config.auth_user, "reader");
+        assert!(config.auth_password_hash.is_empty());
     }
 
     #[test]

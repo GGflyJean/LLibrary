@@ -7,8 +7,8 @@ use rusqlite::types::Value;
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Row};
 
 use crate::models::{
-    BookMetadata, FileRecord, ScanRun, ScanStats, SourceKind, SourceRecord, WorkDetail, WorkFilter,
-    WorkSummary,
+    BookMetadata, FileRecord, ReadingProgress, ScanRun, ScanStats, SourceKind, SourceRecord,
+    WorkDetail, WorkFilter, WorkSummary,
 };
 
 #[derive(Debug, Clone)]
@@ -128,6 +128,15 @@ impl Db {
                 error TEXT,
                 page_count INTEGER NOT NULL DEFAULT 0,
                 UNIQUE(source_id, rel_path)
+            );
+
+            CREATE TABLE IF NOT EXISTS reading_progress (
+                work_id INTEGER PRIMARY KEY REFERENCES works(id) ON DELETE CASCADE,
+                file_id INTEGER NOT NULL,
+                format TEXT NOT NULL DEFAULT '',
+                locator TEXT NOT NULL DEFAULT '',
+                percent REAL NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL
             );
 
             CREATE INDEX IF NOT EXISTS idx_files_hash ON files(hash);
@@ -393,6 +402,56 @@ impl Db {
             out.push(row?);
         }
         Ok(out)
+    }
+
+    pub fn get_reading_progress(&self, work_id: i64) -> Result<Option<ReadingProgress>> {
+        let conn = self.connection()?;
+        let row = conn
+            .query_row(
+                "SELECT work_id, file_id, format, locator, percent, updated_at
+                 FROM reading_progress WHERE work_id = ?1",
+                params![work_id],
+                |row| {
+                    Ok(ReadingProgress {
+                        work_id: row.get(0)?,
+                        file_id: row.get(1)?,
+                        format: row.get(2)?,
+                        locator: row.get(3)?,
+                        percent: row.get(4)?,
+                        updated_at: row.get(5)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    pub fn save_reading_progress(
+        &self,
+        work_id: i64,
+        file_id: i64,
+        format: &str,
+        locator: &str,
+        percent: f64,
+    ) -> Result<()> {
+        let percent = if percent.is_finite() {
+            percent.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let conn = self.connection()?;
+        conn.execute(
+            "INSERT INTO reading_progress (work_id, file_id, format, locator, percent, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(work_id) DO UPDATE SET
+                file_id = excluded.file_id,
+                format = excluded.format,
+                locator = excluded.locator,
+                percent = excluded.percent,
+                updated_at = excluded.updated_at",
+            params![work_id, file_id, format, locator, percent, now()],
+        )?;
+        Ok(())
     }
 
     pub fn find_work_id_by_basename(&self, basename: &str) -> Result<Option<i64>> {
@@ -1192,6 +1251,41 @@ mod tests {
         assert_eq!(detail.work.clc_code, "B2");
         assert_eq!(detail.work.clc_label, "中国哲学");
         assert!(db.unclassified_works(10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn reading_progress_roundtrip() {
+        let (_dir, db) = temp_db();
+        let work = db
+            .insert_work("progress", &metadata("书名", "作者", ""), None)
+            .unwrap();
+        assert!(db.get_reading_progress(work).unwrap().is_none());
+
+        db.save_reading_progress(work, 7, "epub", "epubcfi(/6/4!/4/2/2)", 0.42)
+            .unwrap();
+        let stored = db.get_reading_progress(work).unwrap().expect("progress");
+        assert_eq!(stored.file_id, 7);
+        assert_eq!(stored.format, "epub");
+        assert_eq!(stored.locator, "epubcfi(/6/4!/4/2/2)");
+        assert!((stored.percent - 0.42).abs() < f64::EPSILON);
+
+        db.save_reading_progress(work, 8, "pdf", "12", 1.5).unwrap();
+        let stored = db.get_reading_progress(work).unwrap().expect("progress");
+        assert_eq!(stored.format, "pdf");
+        assert_eq!(stored.locator, "12");
+        assert!((stored.percent - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn reading_progress_survives_work_update() {
+        let (_dir, db) = temp_db();
+        let work = db
+            .insert_work("progress-update", &metadata("书名", "作者", ""), None)
+            .unwrap();
+        db.save_reading_progress(work, 1, "txt", "30", 0.3).unwrap();
+        db.set_work_clc(work, "I2", "中国文学").unwrap();
+        let stored = db.get_reading_progress(work).unwrap().expect("progress");
+        assert_eq!(stored.locator, "30");
     }
 
     #[test]

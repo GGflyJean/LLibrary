@@ -52,7 +52,18 @@
       pageInput.max = String(doc.numPages);
       pagesLabel.textContent = String(doc.numPages);
       status.style.display = 'none';
-      await renderPage(1);
+      let startPage = 1;
+      if (window.llibraryProgress) {
+        const progress = await window.llibraryProgress.load();
+        if (progress) {
+          if (progress.format === 'pdf' && Number(progress.locator) >= 1) {
+            startPage = Number(progress.locator);
+          } else if (progress.percent > 0) {
+            startPage = Math.round(progress.percent * doc.numPages);
+          }
+        }
+      }
+      await renderPage(startPage);
       await loadOutline();
     })
     .catch(function (error) {
@@ -96,6 +107,9 @@
     scale = useScale;
     zoomValue.textContent = Math.round(useScale * 100) + '%';
     reader.scrollTop = 0;
+    if (window.llibraryProgress) {
+      window.llibraryProgress.save('pdf', String(target), target / pdfDoc.numPages);
+    }
   }
 
   function goTo(number) {

@@ -164,6 +164,8 @@ if (root && view) {
       localStorage.setItem(progressKey, String(location.fraction))
       if (percentInput)
         percentInput.value = String(Math.round(location.fraction * 100))
+      if (window.llibraryProgress)
+        window.llibraryProgress.save('kindle', String(location.fraction), location.fraction)
     }
     if (navigating) {
       navigating = false
@@ -189,7 +191,17 @@ if (root && view) {
     }
     setStatus('正在渲染首页…')
 
-    const saved = Number(localStorage.getItem(progressKey))
+    let saved = Number(localStorage.getItem(progressKey))
+    if (window.llibraryProgress) {
+      const progress = await window.llibraryProgress.load()
+      if (progress) {
+        if (progress.format === 'kindle' && Number.isFinite(Number(progress.locator))) {
+          saved = Number(progress.locator)
+        } else if (progress.percent > 0) {
+          saved = progress.percent
+        }
+      }
+    }
     try {
       await view.init({ showTextStart: true })
     } catch (error) {
