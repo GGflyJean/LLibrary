@@ -674,15 +674,6 @@ async fn read_file(
     }
 
     if matches!(format.as_str(), "azw3" | "azw" | "mobi") {
-        let db = state.db.clone();
-        let work_id = record.work_id;
-        let files = match blocking(move || db.list_files(work_id)).await {
-            Ok(files) => files,
-            Err(error) => return internal(error),
-        };
-        if let Some(epub) = files.iter().find(|file| file.is_epub() && !file.missing) {
-            return Redirect::to(&format!("/read/{}", epub.id)).into_response();
-        }
         return render(ReaderTemplate {
             title: record.basename.clone(),
             work_id: record.work_id,
@@ -705,6 +696,18 @@ async fn read_file(
 
     if !matches!(format.as_str(), "epub" | "pdf") {
         return not_found();
+    }
+
+    if format == "epub" {
+        let db = state.db.clone();
+        let work_id = record.work_id;
+        let files = match blocking(move || db.list_files(work_id)).await {
+            Ok(files) => files,
+            Err(error) => return internal(error),
+        };
+        if let Some(kindle) = preferred_kindle(&files) {
+            return Redirect::to(&format!("/read/{}", kindle.id)).into_response();
+        }
     }
 
     let db = state.db.clone();
@@ -1463,6 +1466,14 @@ async fn save_progress(
 
 async fn health() -> impl IntoResponse {
     (StatusCode::OK, "ok")
+}
+
+fn preferred_kindle(files: &[FileRecord]) -> Option<&FileRecord> {
+    ["azw3", "azw", "mobi"].iter().find_map(|format| {
+        files
+            .iter()
+            .find(|file| !file.missing && file.format.eq_ignore_ascii_case(format))
+    })
 }
 
 fn require_web(_state: &AppState, _headers: &HeaderMap) -> Option<Response> {
@@ -2427,6 +2438,14 @@ mod tests {
             .oneshot(request(&format!("/read/{paired_azw}"), true))
             .await
             .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(body_text(response).await.contains("kindle-view"));
+
+        let response = app
+            .clone()
+            .oneshot(request(&format!("/read/{file}"), true))
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
         assert_eq!(
             response
@@ -2435,7 +2454,7 @@ mod tests {
                 .unwrap()
                 .to_str()
                 .unwrap(),
-            format!("/read/{file}")
+            format!("/read/{paired_azw}")
         );
 
         let txt_content = "这是一个测试文本。\n第二行。";

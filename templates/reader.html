@@ -215,34 +215,76 @@
       const pageInput = document.getElementById('reader-page');
       const pagesLabel = document.getElementById('reader-pages');
       const jumpButton = document.getElementById('reader-jump');
-      let locationsReady = false;
+      let pagingReady = false;
+      let useLocations = false;
       let totalPages = 0;
 
-      function percentOf(cfi) {
-        try {
-          return book.locations.percentageFromCfi(cfi) || 0;
-        } catch (error) {
-          return 0;
+      function percentOf(location) {
+        if (useLocations) {
+          try {
+            return book.locations.percentageFromCfi(location.start.cfi) || 0;
+          } catch (error) {
+            return 0;
+          }
+        }
+        if (totalPages > 0 && location.start && typeof location.start.index === 'number') {
+          return location.start.index / totalPages;
+        }
+        return 0;
+      }
+
+      function updatePage(location) {
+        if (!pagingReady || !location || !location.start) return;
+        if (useLocations) {
+          try {
+            const index = book.locations.locationFromCfi(location.start.cfi);
+            if (typeof index === 'number' && index >= 0) {
+              pageInput.value = String(index + 1);
+            }
+            return;
+          } catch (error) {
+            /* fall back to spine index */
+          }
+        }
+        if (typeof location.start.index === 'number') {
+          pageInput.value = String(location.start.index + 1);
         }
       }
 
-      function updatePage(cfi) {
-        if (!locationsReady) return;
-        try {
-          const index = book.locations.locationFromCfi(cfi);
-          if (typeof index === 'number' && index >= 0) {
-            pageInput.value = String(index + 1);
+      function setupPaging() {
+        if (pagingReady) return;
+        const locationTotal = book.locations.length();
+        useLocations = locationTotal > 0;
+        totalPages = useLocations ? locationTotal : (book.spine ? book.spine.length : 0);
+        pagingReady = totalPages > 0;
+        if (pagesLabel) pagesLabel.textContent = pagingReady ? String(totalPages) : '-';
+        if (pageInput) pageInput.max = String(pagingReady ? totalPages : 1);
+        if (pageInput) pageInput.disabled = !pagingReady;
+        if (jumpButton) jumpButton.disabled = !pagingReady;
+        if (!pagingReady) {
+          if (jumpButton) jumpButton.textContent = '不可用';
+          return;
+        }
+        const current = rendition.currentLocation ? rendition.currentLocation() : null;
+        if (current && current.start) updatePage(current);
+        if (pendingPercent > 0) {
+          const fraction = Math.min(1, pendingPercent);
+          pendingPercent = 0;
+          if (useLocations) {
+            const cfi = book.locations.cfiFromPercentage(fraction);
+            if (cfi) rendition.display(cfi);
+          } else if (totalPages > 1) {
+            const item = book.spine.get(Math.min(totalPages - 1, Math.round(fraction * totalPages)));
+            if (item && item.href) rendition.display(item.href);
           }
-        } catch (error) {
-          /* ignore */
         }
       }
 
       rendition.on('relocated', function (location) {
         if (location && location.start) {
           localStorage.setItem(key, location.start.cfi);
-          const percent = locationsReady ? percentOf(location.start.cfi) : 0;
-          if (locationsReady) updatePage(location.start.cfi);
+          const percent = pagingReady ? percentOf(location) : 0;
+          if (pagingReady) updatePage(location);
           if (window.llibraryProgress) {
             window.llibraryProgress.save('epub', location.start.cfi, percent);
           }
@@ -251,30 +293,28 @@
 
       pageInput.disabled = true;
       jumpButton.disabled = true;
+      const pagingFallback = setTimeout(function () { setupPaging(); }, 5000);
       book.ready
         .then(function () { return book.locations.generate(1600); })
         .then(function () {
-          locationsReady = true;
-          totalPages = book.locations.length();
-          pagesLabel.textContent = String(totalPages);
-          pageInput.max = String(totalPages);
-          pageInput.disabled = false;
-          jumpButton.disabled = false;
-          const current = rendition.currentLocation ? rendition.currentLocation() : null;
-          if (current && current.start) updatePage(current.start.cfi);
-          if (pendingPercent > 0) {
-            const cfi = book.locations.cfiFromPercentage(Math.min(1, pendingPercent));
-            pendingPercent = 0;
-            if (cfi) rendition.display(cfi);
-          }
+          clearTimeout(pagingFallback);
+          setupPaging();
         })
-        .catch(function () { jumpButton.textContent = '不可用'; });
+        .catch(function () {
+          clearTimeout(pagingFallback);
+          setupPaging();
+        });
 
       jumpButton.addEventListener('click', function () {
-        if (!locationsReady || !totalPages) return;
+        if (!pagingReady || !totalPages) return;
         const page = Math.max(1, Math.min(totalPages, Math.round(Number(pageInput.value) || 1)));
-        const cfi = book.locations.cfiFromLocation(page - 1);
-        if (cfi) rendition.display(cfi);
+        if (useLocations) {
+          const cfi = book.locations.cfiFromLocation(page - 1);
+          if (cfi) rendition.display(cfi);
+        } else {
+          const item = book.spine.get(page - 1);
+          if (item && item.href) rendition.display(item.href);
+        }
       });
       pageInput.addEventListener('keydown', function (event) {
         if (event.key === 'Enter') jumpButton.click();
