@@ -1,4 +1,4 @@
-const CACHE = 'llibrary-v15';
+const CACHE = 'llibrary-v16';
 const ASSETS = [
   '/static/style.css',
   '/static/progress.js',
@@ -15,6 +15,8 @@ const ASSETS = [
   '/static/reader-pdf.js',
   '/static/reader-txt.js',
   '/static/reader-kindle.js',
+  '/static/reader-settings.js',
+  '/static/bookmarks.js',
   '/static/foliate/view.js',
   '/static/foliate/mobi.js',
   '/static/foliate/paginator.js',

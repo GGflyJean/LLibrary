@@ -242,6 +242,18 @@ pub struct ReadingProgress {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Bookmark {
+    pub id: i64,
+    pub work_id: i64,
+    pub name: String,
+    pub file_id: i64,
+    pub format: String,
+    pub locator: String,
+    pub percent: f64,
+    pub created_at: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ScanRun {
     pub id: i64,

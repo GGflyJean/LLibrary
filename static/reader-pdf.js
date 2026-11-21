@@ -2,6 +2,7 @@
   const reader = document.getElementById('pdf-reader');
   if (!reader || !window.pdfjsLib) return;
   const url = reader.dataset.url;
+  const fileId = Number(document.body.dataset.fileId) || 0;
   const status = document.getElementById('pdf-status');
   const wrap = document.getElementById('pdf-canvas-wrap');
   const pageInput = document.getElementById('pdf-page');
@@ -219,4 +220,24 @@
       return 1;
     }
   }
+
+  window.llibraryCurrentLocation = function () {
+    if (!pdfDoc) return null;
+    return {
+      file_id: fileId,
+      format: 'pdf',
+      locator: String(currentPage),
+      percent: currentPage / pdfDoc.numPages
+    };
+  };
+  window.llibraryJumpTo = function (bookmark) {
+    if (!pdfDoc || !bookmark) return;
+    let target = 0;
+    if (bookmark.format === 'pdf' && Number(bookmark.locator) >= 1) {
+      target = Number(bookmark.locator);
+    } else if (Number(bookmark.percent) > 0) {
+      target = Math.round(Number(bookmark.percent) * pdfDoc.numPages);
+    }
+    if (target > 0) goTo(target);
+  };
 })();

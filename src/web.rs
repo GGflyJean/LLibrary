@@ -280,6 +280,15 @@ struct ProgressUpdate {
     percent: f64,
 }
 
+#[derive(Debug, Deserialize)]
+struct BookmarkInput {
+    name: Option<String>,
+    file_id: i64,
+    format: String,
+    locator: String,
+    percent: f64,
+}
+
 pub fn router(state: AppState) -> Router {
     let static_dir = state.static_dir.clone();
     Router::new()
@@ -313,6 +322,12 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/progress/{work_id}",
             get(get_progress).post(save_progress),
+        )
+        .route(
+            "/api/bookmarks/{id}",
+            get(list_bookmarks)
+                .post(add_bookmark)
+                .delete(remove_bookmark),
         )
         .route("/health", get(health))
         .nest_service("/static", ServeDir::new(static_dir))
@@ -1464,6 +1479,73 @@ async fn save_progress(
     }
 }
 
+async fn list_bookmarks(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(work_id): Path<i64>,
+) -> Response {
+    if let Some(response) = require_api(&state, &headers) {
+        return response;
+    }
+    let db = state.db.clone();
+    match blocking(move || db.list_bookmarks(work_id)).await {
+        Ok(bookmarks) => Json(bookmarks).into_response(),
+        Err(error) => internal(error),
+    }
+}
+
+async fn add_bookmark(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(work_id): Path<i64>,
+    Json(input): Json<BookmarkInput>,
+) -> Response {
+    if let Some(response) = require_api(&state, &headers) {
+        return response;
+    }
+    if input.locator.len() > 2048 {
+        return (StatusCode::BAD_REQUEST, "阅读定位信息过长").into_response();
+    }
+    let name = input
+        .name
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "default".to_string());
+    if name.chars().count() > 40 {
+        return (StatusCode::BAD_REQUEST, "书签名称过长").into_response();
+    }
+    let db = state.db.clone();
+    let format = input.format;
+    let locator = input.locator;
+    let percent = input.percent;
+    let file_id = input.file_id;
+    match blocking(move || {
+        db.insert_bookmark(work_id, &name, file_id, &format, &locator, percent)
+    })
+    .await
+    {
+        Ok(Some(bookmark)) => (StatusCode::CREATED, Json(bookmark)).into_response(),
+        Ok(None) => (StatusCode::CONFLICT, "每本书最多 10 张书签").into_response(),
+        Err(error) => internal(error),
+    }
+}
+
+async fn remove_bookmark(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Response {
+    if let Some(response) = require_api(&state, &headers) {
+        return response;
+    }
+    let db = state.db.clone();
+    match blocking(move || db.delete_bookmark(id)).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => not_found(),
+        Err(error) => internal(error),
+    }
+}
+
 async fn health() -> impl IntoResponse {
     (StatusCode::OK, "ok")
 }
@@ -1959,6 +2041,66 @@ mod tests {
         let body = body_text(response).await;
         assert!(body.contains("epubcfi(/6/4!/4/2/2)"));
         assert!(body.contains("\"format\":\"epub\""));
+    }
+
+    #[tokio::test]
+    async fn bookmark_api_roundtrip() {
+        let (_dir, state, work, file) = test_state();
+        let app = router(state);
+
+        let response = app
+            .clone()
+            .oneshot(request(&format!("/api/bookmarks/{work}"), false))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(body_text(response).await, "[]");
+
+        let body = format!(
+            r#"{{"file_id":{file},"format":"epub","locator":"epubcfi(/6/4!/4/2/2)","percent":0.2}}"#
+        );
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/bookmarks/{work}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        assert!(body_text(response).await.contains("\"name\":\"default\""));
+
+        let response = app
+            .clone()
+            .oneshot(request(&format!("/api/bookmarks/{work}"), false))
+            .await
+            .unwrap();
+        let body = body_text(response).await;
+        assert!(body.contains("epubcfi(/6/4!/4/2/2)"));
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/api/bookmarks/1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        let response = app
+            .clone()
+            .oneshot(request(&format!("/api/bookmarks/{work}"), false))
+            .await
+            .unwrap();
+        assert_eq!(body_text(response).await, "[]");
     }
 
     #[tokio::test]

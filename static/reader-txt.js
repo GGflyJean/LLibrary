@@ -109,5 +109,24 @@
     resizeTimer = setTimeout(relayout, 200);
   });
 
+  window.llibraryCurrentLocation = function () {
+    return {
+      file_id: Number(document.body.dataset.fileId) || 0,
+      format: 'txt',
+      locator: String(page),
+      percent: pages > 0 ? (page - 1) / pages : 0
+    };
+  };
+  window.llibraryJumpTo = function (bookmark) {
+    if (!bookmark) return;
+    let target = 0;
+    if (bookmark.format === 'txt' && Number(bookmark.locator) >= 1) {
+      target = Number(bookmark.locator);
+    } else if (Number(bookmark.percent) > 0) {
+      target = Math.round(Number(bookmark.percent) * pages) + 1;
+    }
+    if (target > 0) goTo(target);
+  };
+
   load();
 })();

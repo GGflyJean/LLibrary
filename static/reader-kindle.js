@@ -103,6 +103,7 @@ if (root && view) {
   let ready = false
   let navigating = false
   let totalPages = 0
+  let lastFraction = 0
   if (pageInput) pageInput.disabled = true
   const jumpButtonEl = document.getElementById('reader-jump')
   if (jumpButtonEl) jumpButtonEl.disabled = true
@@ -166,6 +167,7 @@ if (root && view) {
   view.addEventListener('relocate', (event) => {
     const location = event.detail || {}
     if (typeof location.fraction === 'number') {
+      lastFraction = location.fraction
       localStorage.setItem(progressKey, String(location.fraction))
       if (window.llibraryProgress)
         window.llibraryProgress.save('kindle', String(location.fraction), location.fraction)
@@ -274,6 +276,23 @@ if (root && view) {
     if (event.key === 'ArrowLeft') view.goLeft()
     if (event.key === 'ArrowRight') view.goRight()
   })
+
+  window.llibraryCurrentLocation = () => ({
+    file_id: Number(fileId) || 0,
+    format: 'kindle',
+    locator: String(lastFraction),
+    percent: lastFraction
+  })
+  window.llibraryJumpTo = (bookmark) => {
+    if (!bookmark || !ready) return
+    let fraction = 0
+    if (bookmark.format === 'kindle' && bookmark.locator !== '') {
+      fraction = Number(bookmark.locator)
+    } else if (Number(bookmark.percent) > 0) {
+      fraction = Number(bookmark.percent)
+    }
+    if (Number.isFinite(fraction) && fraction > 0) view.goToFraction(Math.min(1, fraction))
+  }
 
   let cleaned = false
   window.__llibraryCleanup = () => {

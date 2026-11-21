@@ -7,8 +7,8 @@ use rusqlite::types::Value;
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Row};
 
 use crate::models::{
-    BookMetadata, FileRecord, ReadingProgress, ScanRun, ScanStats, SourceKind, SourceRecord,
-    WorkDetail, WorkFilter, WorkSummary,
+    BookMetadata, Bookmark, FileRecord, ReadingProgress, ScanRun, ScanStats, SourceKind,
+    SourceRecord, WorkDetail, WorkFilter, WorkSummary,
 };
 
 #[derive(Debug, Clone)]
@@ -138,6 +138,19 @@ impl Db {
                 percent REAL NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS bookmarks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                work_id INTEGER NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                file_id INTEGER NOT NULL,
+                format TEXT NOT NULL DEFAULT '',
+                locator TEXT NOT NULL DEFAULT '',
+                percent REAL NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_bookmarks_work ON bookmarks(work_id);
 
             CREATE INDEX IF NOT EXISTS idx_files_hash ON files(hash);
             CREATE INDEX IF NOT EXISTS idx_files_basename ON files(basename);
@@ -452,6 +465,81 @@ impl Db {
             params![work_id, file_id, format, locator, percent, now()],
         )?;
         Ok(())
+    }
+
+    pub fn list_bookmarks(&self, work_id: i64) -> Result<Vec<Bookmark>> {
+        let conn = self.connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, work_id, name, file_id, format, locator, percent, created_at
+             FROM bookmarks WHERE work_id = ?1 ORDER BY id ASC",
+        )?;
+        let rows = stmt.query_map(params![work_id], |row| {
+            Ok(Bookmark {
+                id: row.get(0)?,
+                work_id: row.get(1)?,
+                name: row.get(2)?,
+                file_id: row.get(3)?,
+                format: row.get(4)?,
+                locator: row.get(5)?,
+                percent: row.get(6)?,
+                created_at: row.get(7)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    pub fn insert_bookmark(
+        &self,
+        work_id: i64,
+        name: &str,
+        file_id: i64,
+        format: &str,
+        locator: &str,
+        percent: f64,
+    ) -> Result<Option<Bookmark>> {
+        let percent = if percent.is_finite() {
+            percent.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let mut conn = self.connection()?;
+        let tx = conn.transaction()?;
+        let count: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM bookmarks WHERE work_id = ?1",
+            params![work_id],
+            |row| row.get(0),
+        )?;
+        if count >= 10 {
+            return Ok(None);
+        }
+        let created_at = now();
+        tx.execute(
+            "INSERT INTO bookmarks (work_id, name, file_id, format, locator, percent, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![work_id, name, file_id, format, locator, percent, created_at],
+        )?;
+        let id = tx.last_insert_rowid();
+        tx.commit()?;
+        Ok(Some(Bookmark {
+            id,
+            work_id,
+            name: name.to_string(),
+            file_id,
+            format: format.to_string(),
+            locator: locator.to_string(),
+            percent,
+            created_at,
+        }))
+    }
+
+    pub fn delete_bookmark(&self, id: i64) -> Result<bool> {
+        let conn = self.connection()?;
+        let changed = conn.execute("DELETE FROM bookmarks WHERE id = ?1", params![id])?;
+        Ok(changed > 0)
     }
 
     pub fn find_work_id_by_basename(&self, basename: &str) -> Result<Option<i64>> {
@@ -1286,6 +1374,45 @@ mod tests {
         db.set_work_clc(work, "I2", "中国文学").unwrap();
         let stored = db.get_reading_progress(work).unwrap().expect("progress");
         assert_eq!(stored.locator, "30");
+    }
+
+    #[test]
+    fn bookmark_roundtrip_and_limit() {
+        let (_dir, db) = temp_db();
+        let work = db
+            .insert_work("bookmark", &metadata("书名", "作者", ""), None)
+            .unwrap();
+        assert!(db.list_bookmarks(work).unwrap().is_empty());
+
+        let first = db
+            .insert_bookmark(work, "default", 1, "epub", "epubcfi(/6/2!/4/2)", 0.1)
+            .unwrap()
+            .expect("bookmark");
+        assert_eq!(first.name, "default");
+        assert_eq!(db.list_bookmarks(work).unwrap().len(), 1);
+
+        for index in 1..10 {
+            assert!(db
+                .insert_bookmark(
+                    work,
+                    &format!("书签{index}"),
+                    1,
+                    "epub",
+                    &format!("epubcfi(/6/{index})"),
+                    index as f64 / 10.0,
+                )
+                .unwrap()
+                .is_some());
+        }
+        assert_eq!(db.list_bookmarks(work).unwrap().len(), 10);
+        assert!(db
+            .insert_bookmark(work, "溢出", 1, "epub", "x", 1.0)
+            .unwrap()
+            .is_none());
+
+        assert!(db.delete_bookmark(first.id).unwrap());
+        assert!(!db.delete_bookmark(first.id).unwrap());
+        assert_eq!(db.list_bookmarks(work).unwrap().len(), 9);
     }
 
     #[test]
