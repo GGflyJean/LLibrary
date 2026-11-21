@@ -120,6 +120,15 @@
   prev.addEventListener('click', function () { goTo(currentPage - 1); });
   next.addEventListener('click', function () { goTo(currentPage + 1); });
 
+  function dblclickNextEnabled() {
+    const fn = window.llibraryDoubleClickNextEnabled;
+    if (typeof fn === 'function') return fn();
+    return localStorage.getItem('llibrary:dblclick-next') !== '0';
+  }
+  reader.addEventListener('dblclick', function () {
+    if (dblclickNextEnabled() && pdfDoc) goTo(currentPage + 1);
+  });
+
   let touchStartX = 0;
   let touchStartY = 0;
   let touchTracking = false;

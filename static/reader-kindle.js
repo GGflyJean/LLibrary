@@ -255,6 +255,15 @@ if (root && view) {
   if (prev) prev.addEventListener('click', () => loadWithStatus(() => view.prev()))
   if (next) next.addEventListener('click', () => loadWithStatus(() => view.next()))
 
+  const dblclickNextEnabled = () => {
+    const fn = window.llibraryDoubleClickNextEnabled
+    if (typeof fn === 'function') return fn()
+    return localStorage.getItem('llibrary:dblclick-next') !== '0'
+  }
+  root.addEventListener('dblclick', () => {
+    if (dblclickNextEnabled() && ready) loadWithStatus(() => view.next())
+  })
+
   const jump = document.getElementById('reader-jump')
   if (jump) jump.addEventListener('click', async () => {
     if (!ready || !totalPages) return

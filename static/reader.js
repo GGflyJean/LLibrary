@@ -70,4 +70,17 @@
     event.preventDefault();
     window.llibraryOpenReader(trigger.dataset.readerUrl, trigger.dataset.readerTitle);
   });
+
+  document.addEventListener('click', function (event) {
+    if (!(event.target instanceof Element)) return;
+    const trigger = event.target.closest('[data-history-back]');
+    if (!trigger) return;
+    event.preventDefault();
+    const fallback = trigger.getAttribute('data-fallback') || '/';
+    if (window.history.length > 1) {
+      window.history.back();
+    } else {
+      window.location.href = fallback;
+    }
+  });
 })();

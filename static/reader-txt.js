@@ -91,6 +91,15 @@
 
   prev.addEventListener('click', function () { goTo(page - 1); });
   next.addEventListener('click', function () { goTo(page + 1); });
+
+  function dblclickNextEnabled() {
+    const fn = window.llibraryDoubleClickNextEnabled;
+    if (typeof fn === 'function') return fn();
+    return localStorage.getItem('llibrary:dblclick-next') !== '0';
+  }
+  viewport.addEventListener('dblclick', function () {
+    if (dblclickNextEnabled()) goTo(page + 1);
+  });
   jump.addEventListener('click', function () { goTo(Number(pageInput.value) || 1); });
   pageInput.addEventListener('keydown', function (event) {
     if (event.key === 'Enter') goTo(Number(pageInput.value) || 1);

@@ -62,46 +62,6 @@ body.reader-page > .txt-reader,
 body.reader-page > .reader-message { order: 1; }
 .reader-footer .reader-actions { justify-content: center; }
 body.reader-page.in-overlay .reader-header { padding-left: 3.8rem; }
-.reader-gear { font-size: 1.15rem; line-height: 1; }
-.page-nav {
-  position: fixed;
-  left: 50%;
-  bottom: calc(3.6rem + env(safe-area-inset-bottom));
-  transform: translateX(-50%);
-  z-index: 4;
-  display: flex;
-  gap: 0.5rem;
-}
-.page-nav button {
-  background: rgba(255, 255, 255, 0.94);
-  border: 1px solid #d8d2c6;
-  border-radius: 0.5rem;
-  padding: 0.45rem 0.8rem;
-  color: #3d5a80;
-  font: inherit;
-  cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-}
-body.page-nav-top .page-nav {
-  top: 3.6rem;
-  bottom: auto;
-}
-body.page-nav-left .page-nav {
-  left: 0.6rem;
-  right: auto;
-  top: 50%;
-  bottom: auto;
-  transform: translateY(-50%);
-  flex-direction: column;
-}
-body.page-nav-right .page-nav {
-  left: auto;
-  right: 0.6rem;
-  top: 50%;
-  bottom: auto;
-  transform: translateY(-50%);
-  flex-direction: column;
-}
 .reader-settings {
   position: fixed;
   top: 3rem;
@@ -129,24 +89,12 @@ body.page-nav-right .page-nav {
   font: inherit;
   cursor: pointer;
 }
-.reader-settings-options {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.4rem;
-  margin-top: 0.3rem;
-}
-.reader-settings-options button {
-  border: 1px solid #d8d2c6;
-  background: #f7f5f1;
-  border-radius: 0.4rem;
-  padding: 0.35rem 0.5rem;
-  font: inherit;
+.reader-settings-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.4rem;
   cursor: pointer;
-}
-.reader-settings-options button.active {
-  background: #3d5a80;
-  border-color: #3d5a80;
-  color: #fff;
 }
 .bookmark-form {
   display: flex;

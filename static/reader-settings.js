@@ -1,31 +1,22 @@
 (function () {
-  const STORAGE_KEY = 'llibrary:nav-position';
-  const POSITIONS = ['top', 'bottom', 'left', 'right'];
-  const body = document.body;
+  const STORAGE_KEY = 'llibrary:dblclick-next';
   const panel = document.getElementById('reader-settings');
   const toggle = document.getElementById('reader-settings-toggle');
   const close = document.getElementById('reader-settings-close');
-  const choices = panel ? Array.from(panel.querySelectorAll('[data-nav]')) : [];
+  const checkbox = document.getElementById('reader-dblclick-toggle');
 
-  function currentPosition() {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    return POSITIONS.includes(saved) ? saved : 'bottom';
+  function enabled() {
+    return localStorage.getItem(STORAGE_KEY) !== '0';
   }
 
-  function apply(position) {
-    POSITIONS.forEach(function (item) {
-      body.classList.toggle('page-nav-' + item, item === position);
-    });
-    choices.forEach(function (button) {
-      button.classList.toggle('active', button.dataset.nav === position);
-    });
-    localStorage.setItem(STORAGE_KEY, position);
+  function apply() {
+    if (checkbox) checkbox.checked = enabled();
   }
 
   function open() {
     if (!panel) return;
+    apply();
     panel.hidden = false;
-    apply(currentPosition());
   }
 
   function closePanel() {
@@ -40,12 +31,11 @@
     });
   }
   if (close) close.addEventListener('click', closePanel);
-  choices.forEach(function (button) {
-    button.addEventListener('click', function () {
-      apply(button.dataset.nav);
-      closePanel();
+  if (checkbox) {
+    checkbox.addEventListener('change', function () {
+      localStorage.setItem(STORAGE_KEY, checkbox.checked ? '1' : '0');
     });
-  });
+  }
   document.addEventListener('click', function (event) {
     if (!panel || panel.hidden) return;
     if (event.target instanceof Element && (panel.contains(event.target) || (toggle && toggle.contains(event.target)))) return;
@@ -55,5 +45,6 @@
     if (event.key === 'Escape') closePanel();
   });
 
-  apply(currentPosition());
+  apply();
+  window.llibraryDoubleClickNextEnabled = enabled;
 })();

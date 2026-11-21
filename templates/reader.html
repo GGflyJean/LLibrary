@@ -4,16 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ title }}</title>
-  <link rel="stylesheet" href="/static/reader.css?v=16">
+  <link rel="stylesheet" href="/static/reader.css?v=17">
 </head>
 <body class="reader-page" data-back-url="{{ back_url }}" data-work-id="{{ work_id }}" data-file-id="{{ file_id }}">
   <header class="reader-header">
     <span class="reader-title">{{ title }}</span>
     <span class="reader-top-actions">
       <a href="{{ download_url }}">下载</a>
-      <a href="{{ back_url }}">返回书库</a>
+      <button type="button" id="reader-back">返回书库</button>
+      <button type="button" id="reader-settings-toggle">设置</button>
       <button type="button" id="reader-close">关闭</button>
-      <button type="button" id="reader-settings-toggle" class="reader-gear" title="设置" aria-label="设置">⚙</button>
     </span>
   </header>
   <footer class="reader-footer">
@@ -21,6 +21,8 @@
       {% if is_epub %}
         <button type="button" id="reader-toc-toggle">目录</button>
         <button type="button" id="reader-bookmark-toggle">书签</button>
+        <button type="button" id="reader-prev">上一页</button>
+        <button type="button" id="reader-next">下一页</button>
         <span class="reader-jump">
           <input id="reader-page" type="number" min="1" value="1" title="页码">
           <span class="muted">/ <span id="reader-pages">-</span> 页</span>
@@ -35,6 +37,8 @@
       {% if is_pdf %}
         <button type="button" id="reader-toc-toggle">目录</button>
         <button type="button" id="reader-bookmark-toggle">书签</button>
+        <button type="button" id="pdf-prev">上一页</button>
+        <button type="button" id="pdf-next">下一页</button>
         <span class="reader-jump">
           <input id="pdf-page" type="number" min="1" max="{{ page_count }}" value="1" title="页码">
           <span class="muted">/ <span id="pdf-pages">{{ page_count }}</span> 页</span>
@@ -49,6 +53,8 @@
       {% endif %}
       {% if is_txt %}
         <button type="button" id="reader-bookmark-toggle">书签</button>
+        <button type="button" id="txt-prev">上一页</button>
+        <button type="button" id="txt-next">下一页</button>
         <span class="reader-jump">
           <input id="txt-page" type="number" min="1" value="1" title="页码">
           <span class="muted">/ <span id="txt-pages">1</span> 页</span>
@@ -63,6 +69,8 @@
       {% if is_kindle %}
         <button type="button" id="reader-toc-toggle">目录</button>
         <button type="button" id="reader-bookmark-toggle">书签</button>
+        <button type="button" id="reader-prev">上一页</button>
+        <button type="button" id="reader-next">下一页</button>
         <span class="reader-jump">
           <input id="reader-page" type="number" min="1" value="1" title="页码">
           <span class="muted">/ <span id="reader-pages">-</span> 页</span>
@@ -76,31 +84,6 @@
       {% endif %}
     </span>
   </footer>
-
-  {% if is_epub %}
-  <div class="page-nav" id="page-nav">
-    <button type="button" id="reader-prev">上一页</button>
-    <button type="button" id="reader-next">下一页</button>
-  </div>
-  {% endif %}
-  {% if is_pdf %}
-  <div class="page-nav" id="page-nav">
-    <button type="button" id="pdf-prev">上一页</button>
-    <button type="button" id="pdf-next">下一页</button>
-  </div>
-  {% endif %}
-  {% if is_txt %}
-  <div class="page-nav" id="page-nav">
-    <button type="button" id="txt-prev">上一页</button>
-    <button type="button" id="txt-next">下一页</button>
-  </div>
-  {% endif %}
-  {% if is_kindle %}
-  <div class="page-nav" id="page-nav">
-    <button type="button" id="reader-prev">上一页</button>
-    <button type="button" id="reader-next">下一页</button>
-  </div>
-  {% endif %}
 
   <aside id="reader-bookmarks" class="reader-toc reader-bookmarks" hidden>
     <div class="reader-toc-head">
@@ -119,17 +102,14 @@
       <strong>设置</strong>
       <button type="button" id="reader-settings-close">关闭</button>
     </div>
-    <p class="muted">翻页按钮位置</p>
-    <div class="reader-settings-options">
-      <button type="button" data-nav="top">上方</button>
-      <button type="button" data-nav="bottom">下方</button>
-      <button type="button" data-nav="left">左边</button>
-      <button type="button" data-nav="right">右边</button>
-    </div>
+    <label class="reader-settings-toggle">
+      <input type="checkbox" id="reader-dblclick-toggle">
+      双击页面翻到下一页
+    </label>
   </div>
 
-  <script src="/static/reader-settings.js?v=16"></script>
-  <script src="/static/bookmarks.js?v=16"></script>
+  <script src="/static/reader-settings.js?v=17"></script>
+  <script src="/static/bookmarks.js?v=17"></script>
 
   {% if has_toc %}
   <aside id="reader-toc" class="reader-toc" hidden>
@@ -141,7 +121,7 @@
   </aside>
   {% endif %}
 
-  <script src="/static/progress.js?v=16"></script>
+  <script src="/static/progress.js?v=17"></script>
 
   {% if is_epub %}
   <div class="kindle-reader">
@@ -417,8 +397,17 @@
       document.getElementById('reader-prev').addEventListener('click', function () { rendition.prev(); });
       document.getElementById('reader-next').addEventListener('click', function () { rendition.next(); });
 
+      function dblclickNextEnabled() {
+        const fn = window.llibraryDoubleClickNextEnabled;
+        if (typeof fn === 'function') return fn();
+        return localStorage.getItem('llibrary:dblclick-next') !== '0';
+      }
+      viewer.addEventListener('dblclick', function () {
+        if (dblclickNextEnabled()) rendition.next();
+      });
+
       const swipeDocs = new WeakSet();
-      function attachSwipe(doc) {
+      function attachGestures(doc) {
         if (!doc || swipeDocs.has(doc)) return;
         swipeDocs.add(doc);
         let startX = 0, startY = 0, tracking = false;
@@ -439,9 +428,12 @@
           if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
           if (dx < 0) rendition.next(); else rendition.prev();
         }, { passive: true });
+        doc.addEventListener('dblclick', function () {
+          if (dblclickNextEnabled()) rendition.next();
+        });
       }
       rendition.on('rendered', function (section, view) {
-        if (view && view.document) attachSwipe(view.document);
+        if (view && view.document) attachGestures(view.document);
       });
 
       document.addEventListener('keydown', function (event) {
@@ -496,7 +488,7 @@
     <div id="pdf-status" class="pdf-status">正在加载 PDF…</div>
   </div>
   <script src="/static/pdfjs/pdf.min.js"></script>
-  <script src="/static/reader-pdf.js?v=16"></script>
+  <script src="/static/reader-pdf.js?v=17"></script>
   {% endif %}
 
   {% if is_txt %}
@@ -504,7 +496,7 @@
     <div id="txt-viewport" class="txt-viewport"><div id="txt-content" class="txt-content"></div></div>
     <div id="txt-status" class="kindle-status">正在加载文本…</div>
   </div>
-  <script src="/static/reader-txt.js?v=16"></script>
+  <script src="/static/reader-txt.js?v=17"></script>
   {% endif %}
 
   {% if is_kindle %}
@@ -512,7 +504,7 @@
     <foliate-view id="kindle-view"></foliate-view>
     <div id="kindle-status" class="kindle-status">正在加载电子书…</div>
   </div>
-  <script type="module" src="/static/reader-kindle.js?v=16"></script>
+  <script type="module" src="/static/reader-kindle.js?v=17"></script>
   {% endif %}
 
   {% if !supported %}
@@ -537,10 +529,32 @@
 
     (function () {
       const close = document.getElementById('reader-close');
+      const backButton = document.getElementById('reader-back');
       if (window.parent !== window) {
         document.body.classList.add('in-overlay');
         close.style.display = 'none';
       }
+      function returnToLibrary() {
+        const fallback = document.body.dataset.backUrl || '/';
+        if (window.parent !== window) {
+          try {
+            if (window.parent.history.length > 1) {
+              window.parent.history.back();
+            } else {
+              window.parent.location.href = '/';
+            }
+            return;
+          } catch (error) {
+            /* cross-origin fallback below */
+          }
+        }
+        if (window.history.length > 1) {
+          window.history.back();
+        } else {
+          window.location.href = fallback;
+        }
+      }
+      backButton.addEventListener('click', returnToLibrary);
       close.addEventListener('click', function () {
         if (window.parent !== window) {
           window.parent.postMessage({ type: 'llibrary-close-reader' }, window.location.origin);
